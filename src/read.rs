@@ -1,5 +1,4 @@
-use std::collections::HashMap;
-use std::error::Error;
+use std::{collections::HashMap, error::Error, path::Path};
 
 // ============================================================
 // Numeric / field helpers
@@ -38,6 +37,7 @@ fn c<'a>(row: &'a [String], i: usize) -> &'a str {
 
 /// `Statement` – broker metadata (key → value pairs).
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct StatementRow {
     pub feldname: String,
     pub feldwert: String,
@@ -45,6 +45,7 @@ pub struct StatementRow {
 
 /// `Kontoinformation` – account information (key → value pairs).
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct KontoinformationRow {
     pub feldname: String,
     pub feldwert: String,
@@ -52,6 +53,7 @@ pub struct KontoinformationRow {
 
 /// `Nettovermögenswert` – net asset value per asset class.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct NettovermoegensRow {
     pub assetklasse: String,
     pub vorheriger_gesamtwert: f64,
@@ -63,6 +65,7 @@ pub struct NettovermoegensRow {
 
 /// `Nettovermögenswert` (sub-table) – time-weighted return.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct ZeitgewichteteRenditeRow {
     /// Return expressed as a percentage value (e.g. `15.813252668`).
     pub rendite_pct: f64,
@@ -70,6 +73,7 @@ pub struct ZeitgewichteteRenditeRow {
 
 /// `Veränderung des NAV` – NAV change summary (key → numeric value).
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct VeraenderungNavRow {
     pub feldname: String,
     pub feldwert: f64,
@@ -77,6 +81,7 @@ pub struct VeraenderungNavRow {
 
 /// `Mark-to-Market-Performance-Überblick` – MTM P&L per position.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct MtmPerformanceRow {
     pub vermoegenswert_kategorie: String,
     pub symbol: String,
@@ -99,6 +104,7 @@ pub struct MtmPerformanceRow {
 /// `Übersicht  zur realisierten und unrealisierten Performance`.
 /// (Note: the table name in the CSV contains two spaces after "Übersicht".)
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct PerformanceUebersichtRow {
     pub vermoegenswert_kategorie: String,
     pub symbol: String,
@@ -119,6 +125,7 @@ pub struct PerformanceUebersichtRow {
 
 /// `Cash-Bericht` – cash movements per currency.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct CashBerichtRow {
     pub waehrungsuebersicht: String,
     pub waehrung: String,
@@ -129,6 +136,7 @@ pub struct CashBerichtRow {
 
 /// `Offene Positionen` – individual open positions.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct OffenePositionRow {
     pub data_discriminator: String,
     pub vermoegenswert_kategorie: String,
@@ -146,6 +154,7 @@ pub struct OffenePositionRow {
 
 /// `Devisenpositionen` – foreign-currency cash positions.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct DevisenpositionRow {
     pub vermoegenswert_kategorie: String,
     pub waehrung: String,
@@ -161,6 +170,7 @@ pub struct DevisenpositionRow {
 
 /// `Netto-Aktienpositionsübersicht` – net stock positions.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct NettoAktienpositionRow {
     pub vermoegenswert_kategorie: String,
     pub waehrung: String,
@@ -175,6 +185,7 @@ pub struct NettoAktienpositionRow {
 /// `Transaktionen` – security trades (stocks, ETFs, …).
 /// Uses the first of the two `Transaktionen` headers in the CSV.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct TransaktionRow {
     pub data_discriminator: String,
     pub vermoegenswert_kategorie: String,
@@ -195,6 +206,7 @@ pub struct TransaktionRow {
 /// `Transaktionen` – foreign-exchange trades.
 /// Uses the second `Transaktionen` header (column 7 is empty, column 12 is MTM in EUR).
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct DevisenTransaktionRow {
     pub data_discriminator: String,
     pub vermoegenswert_kategorie: String,
@@ -211,6 +223,7 @@ pub struct DevisenTransaktionRow {
 
 /// `Transaktionsgebühren` – transaction fees (e.g. PTM levy).
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct TransaktionsgebuehrRow {
     pub vermoegenswert_kategorie: String,
     pub waehrung: String,
@@ -224,6 +237,7 @@ pub struct TransaktionsgebuehrRow {
 
 /// `Kapitalmaßnahmen` – corporate actions.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct KapitalmassnahmeRow {
     pub vermoegenswert_kategorie: String,
     pub waehrung: String,
@@ -239,6 +253,7 @@ pub struct KapitalmassnahmeRow {
 
 /// `Einzahlungen & Auszahlungen` – deposits and withdrawals.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct EinAuszahlungRow {
     pub waehrung: String,
     pub abwicklungsdatum: String,
@@ -248,6 +263,7 @@ pub struct EinAuszahlungRow {
 
 /// `Dividenden` – dividend income.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct DividendeRow {
     pub waehrung: String,
     pub datum: String,
@@ -256,7 +272,8 @@ pub struct DividendeRow {
 }
 
 /// `Quellensteuer` – withholding tax.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct QuellensteuerRow {
     pub waehrung: String,
     pub datum: String,
@@ -267,6 +284,7 @@ pub struct QuellensteuerRow {
 
 /// `Zinsen` – interest income.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct ZinsRow {
     pub waehrung: String,
     pub datum: String,
@@ -276,6 +294,7 @@ pub struct ZinsRow {
 
 /// `Aufgelaufene Zinsen` – accrued interest (key → numeric value per currency).
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct AufgelaufeneZinsRow {
     pub waehrung: String,
     pub feldname: String,
@@ -284,6 +303,7 @@ pub struct AufgelaufeneZinsRow {
 
 /// `Veränderung im Dividendenanfall` – changes in accrued dividends.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct DividendenanfallRow {
     pub vermoegenswert_kategorie: String,
     pub waehrung: String,
@@ -302,6 +322,7 @@ pub struct DividendenanfallRow {
 
 /// `Stock Yield Enhancement Program Securities Lent` – current SYEP loans outstanding.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct SyepLentRow {
     pub vermoegenswert_kategorie: String,
     pub waehrung: String,
@@ -316,6 +337,7 @@ pub struct SyepLentRow {
 /// The CSV header has an intentionally blank column between `Beschreibung` and
 /// `Transaktions ID-Nummer`; that blank field is skipped when parsing.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct SyepActivityRow {
     pub vermoegenswert_kategorie: String,
     pub waehrung: String,
@@ -329,6 +351,7 @@ pub struct SyepActivityRow {
 
 /// `Stock Yield Enhancement Program Securities Lent Interest Details`.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct SyepInterestRow {
     pub waehrung: String,
     pub abwicklungsdatum: String,
@@ -344,6 +367,7 @@ pub struct SyepInterestRow {
 
 /// `Informationen zum Finanzinstrument` – instrument master data.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct FinanzinstrumentRow {
     pub vermoegenswert_kategorie: String,
     pub symbol: String,
@@ -359,6 +383,7 @@ pub struct FinanzinstrumentRow {
 
 /// `Codes` – transaction code glossary.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct CodeRow {
     pub code: String,
     pub bedeutung: String,
@@ -368,6 +393,7 @@ pub struct CodeRow {
 
 /// `Hinweise/Rechtshinweise` – legal notices.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct HinweisRow {
     pub typ: String,
     pub hinweis: String,
@@ -377,6 +403,7 @@ pub struct HinweisRow {
 // Top-level data container
 // ============================================================
 
+#[allow(dead_code)]
 pub struct KontoauszugData {
     pub statement: Vec<StatementRow>,
     pub kontoinformation: Vec<KontoinformationRow>,
@@ -417,7 +444,7 @@ pub struct KontoauszugData {
 /// Each entry: `(row_kind, fields_after_table_name_and_row_kind)`.
 type Groups = HashMap<String, Vec<(String, Vec<String>)>>;
 
-fn load_groups(path: &str) -> Result<Groups, Box<dyn Error>> {
+fn load_groups(path: &Path) -> Result<Groups, Box<dyn Error>> {
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(false)
         .flexible(true)
@@ -455,7 +482,7 @@ fn data_rows<'a>(groups: &'a Groups, table: &str) -> impl Iterator<Item = &'a Ve
 // Parsing
 // ============================================================
 
-pub fn parse_kontoauszug(path: &str) -> Result<KontoauszugData, Box<dyn Error>> {
+pub fn parse_kontoauszug(path: &Path) -> Result<KontoauszugData, Box<dyn Error>> {
     let groups = load_groups(path)?;
 
     // ── Statement ────────────────────────────────────────────────────────────
@@ -752,12 +779,19 @@ pub fn parse_kontoauszug(path: &str) -> Result<KontoauszugData, Box<dyn Error>> 
 
     // ── Zinsen ────────────────────────────────────────────────────────────────
     let zinsen: Vec<ZinsRow> = data_rows(&groups, "Zinsen")
-        .filter(|f| !c(f, 1).is_empty())
-        .map(|f| ZinsRow {
-            waehrung: c(f, 0).to_string(),
-            datum: c(f, 1).to_string(),
-            beschreibung: c(f, 2).to_string(),
-            betrag: fv(c(f, 3)),
+        .map(|f| {
+            let mut zins = ZinsRow {
+                waehrung: c(f, 0).to_string(),
+                datum: c(f, 1).to_string(),
+                beschreibung: c(f, 2).to_string(),
+                betrag: fv(c(f, 3)),
+            };
+            if zins.beschreibung.is_empty() {
+                // re-arange summary row
+                zins.beschreibung = zins.waehrung;
+                zins.waehrung = "".to_string();
+            }
+            zins
         })
         .collect();
 
