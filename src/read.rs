@@ -1,0 +1,931 @@
+use std::collections::HashMap;
+use std::error::Error;
+
+// ============================================================
+// Numeric / field helpers
+// ============================================================
+
+/// Parse an optional float from a CSV cell.
+/// Returns `None` for empty strings or the sentinel "--".
+/// Handles thousands-separator commas (e.g. `"542,625.03"`) and trailing `%`.
+fn opt_f64(s: &str) -> Option<f64> {
+    let s = s.trim();
+    if s.is_empty() || s == "--" {
+        return None;
+    }
+    let cleaned: String = s.chars().filter(|&c| c != ',').collect();
+    let cleaned = cleaned.trim_end_matches('%');
+    cleaned.parse().ok()
+}
+
+fn fv(s: &str) -> f64 {
+    opt_f64(s).unwrap_or(0.0)
+}
+
+fn iv(s: &str) -> i64 {
+    let cleaned: String = s.trim().chars().filter(|&c| c != ',').collect();
+    cleaned.parse().unwrap_or(0)
+}
+
+/// Get field `i` from a row slice, returning `""` if out of bounds.
+fn c<'a>(row: &'a [String], i: usize) -> &'a str {
+    row.get(i).map(String::as_str).unwrap_or("")
+}
+
+// ============================================================
+// Table structs
+// ============================================================
+
+/// `Statement` – broker metadata (key → value pairs).
+#[derive(Debug)]
+pub struct StatementRow {
+    pub feldname: String,
+    pub feldwert: String,
+}
+
+/// `Kontoinformation` – account information (key → value pairs).
+#[derive(Debug)]
+pub struct KontoinformationRow {
+    pub feldname: String,
+    pub feldwert: String,
+}
+
+/// `Nettovermögenswert` – net asset value per asset class.
+#[derive(Debug)]
+pub struct NettovermoegensRow {
+    pub assetklasse: String,
+    pub vorheriger_gesamtwert: f64,
+    pub aktuell_long: f64,
+    pub aktuell_short: f64,
+    pub aktueller_gesamtwert: f64,
+    pub veraenderung: f64,
+}
+
+/// `Nettovermögenswert` (sub-table) – time-weighted return.
+#[derive(Debug)]
+pub struct ZeitgewichteteRenditeRow {
+    /// Return expressed as a percentage value (e.g. `15.813252668`).
+    pub rendite_pct: f64,
+}
+
+/// `Veränderung des NAV` – NAV change summary (key → numeric value).
+#[derive(Debug)]
+pub struct VeraenderungNavRow {
+    pub feldname: String,
+    pub feldwert: f64,
+}
+
+/// `Mark-to-Market-Performance-Überblick` – MTM P&L per position.
+#[derive(Debug)]
+pub struct MtmPerformanceRow {
+    pub vermoegenswert_kategorie: String,
+    pub symbol: String,
+    /// `None` when the position was newly opened (displayed as "--" in the CSV).
+    pub vorher_menge: Option<f64>,
+    /// `None` when the position was fully closed.
+    pub aktuell_menge: Option<f64>,
+    /// `None` for new positions.
+    pub vorher_kurs: Option<f64>,
+    /// `None` for closed positions.
+    pub aktuell_kurs: Option<f64>,
+    pub mtm_pl_position: f64,
+    pub mtm_pl_transaktion: f64,
+    pub mtm_pl_provisionen: f64,
+    pub mtm_pl_sonstige: f64,
+    pub mtm_pl_gesamt: f64,
+    pub code: String,
+}
+
+/// `Übersicht  zur realisierten und unrealisierten Performance`.
+/// (Note: the table name in the CSV contains two spaces after "Übersicht".)
+#[derive(Debug)]
+pub struct PerformanceUebersichtRow {
+    pub vermoegenswert_kategorie: String,
+    pub symbol: String,
+    pub kostenanpassung: f64,
+    pub realisiert_st_gewinn: f64,
+    pub realisiert_st_verlust: f64,
+    pub realisiert_lt_gewinn: f64,
+    pub realisiert_lt_verlust: f64,
+    pub realisiert_gesamt: f64,
+    pub unrealisiert_st_gewinn: f64,
+    pub unrealisiert_st_verlust: f64,
+    pub unrealisiert_lt_gewinn: f64,
+    pub unrealisiert_lt_verlust: f64,
+    pub unrealisiert_gesamt: f64,
+    pub gesamt: f64,
+    pub code: String,
+}
+
+/// `Cash-Bericht` – cash movements per currency.
+#[derive(Debug)]
+pub struct CashBerichtRow {
+    pub waehrungsuebersicht: String,
+    pub waehrung: String,
+    pub gesamt: f64,
+    pub wertpapiere: f64,
+    pub futures: f64,
+}
+
+/// `Offene Positionen` – individual open positions.
+#[derive(Debug)]
+pub struct OffenePositionRow {
+    pub data_discriminator: String,
+    pub vermoegenswert_kategorie: String,
+    pub waehrung: String,
+    pub symbol: String,
+    pub menge: Option<f64>,
+    pub multiplikator: f64,
+    pub einstands_kurs: f64,
+    pub kostenbasis: f64,
+    pub schlusskurs: Option<f64>,
+    pub wert: f64,
+    pub unrealisierter_gv: f64,
+    pub code: String,
+}
+
+/// `Devisenpositionen` – foreign-currency cash positions.
+#[derive(Debug)]
+pub struct DevisenpositionRow {
+    pub vermoegenswert_kategorie: String,
+    pub waehrung: String,
+    pub beschreibung: String,
+    pub menge: f64,
+    pub einstands_kurs: f64,
+    pub kostenbasis_eur: f64,
+    pub schlusskurs: f64,
+    pub wert_eur: f64,
+    pub unrealisierter_gv_eur: f64,
+    pub code: String,
+}
+
+/// `Netto-Aktienpositionsübersicht` – net stock positions.
+#[derive(Debug)]
+pub struct NettoAktienpositionRow {
+    pub vermoegenswert_kategorie: String,
+    pub waehrung: String,
+    pub symbol: String,
+    pub beschreibung: String,
+    pub aktien_bei_ib: i64,
+    pub aktien_geliehen: i64,
+    pub aktien_verliehen: i64,
+    pub netto_aktien: i64,
+}
+
+/// `Transaktionen` – security trades (stocks, ETFs, …).
+/// Uses the first of the two `Transaktionen` headers in the CSV.
+#[derive(Debug)]
+pub struct TransaktionRow {
+    pub data_discriminator: String,
+    pub vermoegenswert_kategorie: String,
+    pub waehrung: String,
+    pub symbol: String,
+    pub datum_zeit: String,
+    pub menge: f64,
+    pub transaktions_kurs: f64,
+    pub schlusskurs: f64,
+    pub erloese: f64,
+    pub prov_gebuehr: f64,
+    pub basis: f64,
+    pub realisierter_gv: f64,
+    pub mtm_gv: f64,
+    pub code: String,
+}
+
+/// `Transaktionen` – foreign-exchange trades.
+/// Uses the second `Transaktionen` header (column 7 is empty, column 12 is MTM in EUR).
+#[derive(Debug)]
+pub struct DevisenTransaktionRow {
+    pub data_discriminator: String,
+    pub vermoegenswert_kategorie: String,
+    pub waehrung: String,
+    pub symbol: String,
+    pub datum_zeit: String,
+    pub menge: f64,
+    pub transaktions_kurs: f64,
+    pub erloese: f64,
+    pub provisionen_eur: f64,
+    pub mtm_eur: f64,
+    pub code: String,
+}
+
+/// `Transaktionsgebühren` – transaction fees (e.g. PTM levy).
+#[derive(Debug)]
+pub struct TransaktionsgebuehrRow {
+    pub vermoegenswert_kategorie: String,
+    pub waehrung: String,
+    pub datum_zeit: String,
+    pub symbol: String,
+    pub beschreibung: String,
+    pub menge: f64,
+    pub handelskurs: f64,
+    pub betrag: f64,
+}
+
+/// `Kapitalmaßnahmen` – corporate actions.
+#[derive(Debug)]
+pub struct KapitalmassnahmeRow {
+    pub vermoegenswert_kategorie: String,
+    pub waehrung: String,
+    pub berichtsdatum: String,
+    pub datum_zeit: String,
+    pub beschreibung: String,
+    pub menge: f64,
+    pub erloese: f64,
+    pub wert: f64,
+    pub realisierter_gv: f64,
+    pub code: String,
+}
+
+/// `Einzahlungen & Auszahlungen` – deposits and withdrawals.
+#[derive(Debug)]
+pub struct EinAuszahlungRow {
+    pub waehrung: String,
+    pub abwicklungsdatum: String,
+    pub beschreibung: String,
+    pub betrag: f64,
+}
+
+/// `Dividenden` – dividend income.
+#[derive(Debug)]
+pub struct DividendeRow {
+    pub waehrung: String,
+    pub datum: String,
+    pub beschreibung: String,
+    pub betrag: f64,
+}
+
+/// `Quellensteuer` – withholding tax.
+#[derive(Debug)]
+pub struct QuellensteuerRow {
+    pub waehrung: String,
+    pub datum: String,
+    pub beschreibung: String,
+    pub betrag: f64,
+    pub code: String,
+}
+
+/// `Zinsen` – interest income.
+#[derive(Debug)]
+pub struct ZinsRow {
+    pub waehrung: String,
+    pub datum: String,
+    pub beschreibung: String,
+    pub betrag: f64,
+}
+
+/// `Aufgelaufene Zinsen` – accrued interest (key → numeric value per currency).
+#[derive(Debug)]
+pub struct AufgelaufeneZinsRow {
+    pub waehrung: String,
+    pub feldname: String,
+    pub feldwert: f64,
+}
+
+/// `Veränderung im Dividendenanfall` – changes in accrued dividends.
+#[derive(Debug)]
+pub struct DividendenanfallRow {
+    pub vermoegenswert_kategorie: String,
+    pub waehrung: String,
+    pub symbol: String,
+    pub datum: String,
+    pub ex_tag: String,
+    pub zahlungsdatum: String,
+    pub menge: f64,
+    pub steuer: f64,
+    pub gebuehr: f64,
+    pub bruttosatz: f64,
+    pub bruttobetrag: f64,
+    pub nettobetrag: f64,
+    pub code: String,
+}
+
+/// `Stock Yield Enhancement Program Securities Lent` – current SYEP loans outstanding.
+#[derive(Debug)]
+pub struct SyepLentRow {
+    pub vermoegenswert_kategorie: String,
+    pub waehrung: String,
+    pub symbol: String,
+    pub transaktions_id: String,
+    pub menge: f64,
+    pub zinssatz_pct: f64,
+    pub sicherheitsbetrag: f64,
+}
+
+/// `Stock Yield Enhancement Program Securities Lent Activity` – SYEP loan events.
+/// The CSV header has an intentionally blank column between `Beschreibung` and
+/// `Transaktions ID-Nummer`; that blank field is skipped when parsing.
+#[derive(Debug)]
+pub struct SyepActivityRow {
+    pub vermoegenswert_kategorie: String,
+    pub waehrung: String,
+    pub symbol: String,
+    pub datum: String,
+    pub beschreibung: String,
+    pub transaktions_id: String,
+    pub menge: f64,
+    pub sicherheitsbetrag: f64,
+}
+
+/// `Stock Yield Enhancement Program Securities Lent Interest Details`.
+#[derive(Debug)]
+pub struct SyepInterestRow {
+    pub waehrung: String,
+    pub abwicklungsdatum: String,
+    pub symbol: String,
+    pub anfangsdatum: String,
+    pub menge: f64,
+    pub sicherheitsbetrag: f64,
+    pub market_based_rate_pct: f64,
+    pub zinssatz_pct: f64,
+    pub zinsen_an_kunden: f64,
+    pub code: String,
+}
+
+/// `Informationen zum Finanzinstrument` – instrument master data.
+#[derive(Debug)]
+pub struct FinanzinstrumentRow {
+    pub vermoegenswert_kategorie: String,
+    pub symbol: String,
+    pub beschreibung: String,
+    pub conid: String,
+    pub wertpapier_id: String,
+    pub basiswert: String,
+    pub boerse: String,
+    pub multiplikator: f64,
+    pub typ: String,
+    pub code: String,
+}
+
+/// `Codes` – transaction code glossary.
+#[derive(Debug)]
+pub struct CodeRow {
+    pub code: String,
+    pub bedeutung: String,
+    pub code_forts: String,
+    pub bedeutung_forts: String,
+}
+
+/// `Hinweise/Rechtshinweise` – legal notices.
+#[derive(Debug)]
+pub struct HinweisRow {
+    pub typ: String,
+    pub hinweis: String,
+}
+
+// ============================================================
+// Top-level data container
+// ============================================================
+
+pub struct KontoauszugData {
+    pub statement: Vec<StatementRow>,
+    pub kontoinformation: Vec<KontoinformationRow>,
+    pub nettovermoegenswert: Vec<NettovermoegensRow>,
+    pub zeitgewichtete_rendite: Vec<ZeitgewichteteRenditeRow>,
+    pub veraenderung_nav: Vec<VeraenderungNavRow>,
+    pub mtm_performance: Vec<MtmPerformanceRow>,
+    pub performance_uebersicht: Vec<PerformanceUebersichtRow>,
+    pub cash_bericht: Vec<CashBerichtRow>,
+    pub offene_positionen: Vec<OffenePositionRow>,
+    pub devisenpositionen: Vec<DevisenpositionRow>,
+    pub netto_aktien: Vec<NettoAktienpositionRow>,
+    pub transaktionen: Vec<TransaktionRow>,
+    pub devisen_transaktionen: Vec<DevisenTransaktionRow>,
+    pub transaktionsgebuehren: Vec<TransaktionsgebuehrRow>,
+    pub kapitalmassnnahmen: Vec<KapitalmassnahmeRow>,
+    pub ein_auszahlungen: Vec<EinAuszahlungRow>,
+    pub dividenden: Vec<DividendeRow>,
+    pub quellensteuer: Vec<QuellensteuerRow>,
+    pub zinsen: Vec<ZinsRow>,
+    pub aufgelaufene_zinsen: Vec<AufgelaufeneZinsRow>,
+    pub dividendenanfall: Vec<DividendenanfallRow>,
+    pub syep_lent: Vec<SyepLentRow>,
+    pub syep_activity: Vec<SyepActivityRow>,
+    pub syep_interest: Vec<SyepInterestRow>,
+    pub finanzinstrumente: Vec<FinanzinstrumentRow>,
+    pub codes: Vec<CodeRow>,
+    pub hinweise: Vec<HinweisRow>,
+    /// Total P&L for the statement period (standalone row in the CSV).
+    pub gesamt_guv: f64,
+}
+
+// ============================================================
+// Raw CSV loading
+// ============================================================
+
+/// Raw rows grouped by table name.
+/// Each entry: `(row_kind, fields_after_table_name_and_row_kind)`.
+type Groups = HashMap<String, Vec<(String, Vec<String>)>>;
+
+fn load_groups(path: &str) -> Result<Groups, Box<dyn Error>> {
+    let mut rdr = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .flexible(true)
+        .from_path(path)?;
+
+    let mut groups: Groups = HashMap::new();
+
+    for result in rdr.records() {
+        let rec = result?;
+        if rec.len() < 2 {
+            continue;
+        }
+        let table = rec[0].trim().to_string();
+        if table.is_empty() {
+            continue;
+        }
+        let kind = rec[1].trim().to_string();
+        let fields: Vec<String> = rec.iter().skip(2).map(str::to_string).collect();
+        groups.entry(table).or_default().push((kind, fields));
+    }
+    Ok(groups)
+}
+
+/// Iterate over all `Data`-kind rows for a given table.
+fn data_rows<'a>(groups: &'a Groups, table: &str) -> impl Iterator<Item = &'a Vec<String>> {
+    groups
+        .get(table)
+        .into_iter()
+        .flatten()
+        .filter(|(kind, _)| kind == "Data")
+        .map(|(_, fields)| fields)
+}
+
+// ============================================================
+// Parsing
+// ============================================================
+
+pub fn parse_kontoauszug(path: &str) -> Result<KontoauszugData, Box<dyn Error>> {
+    let groups = load_groups(path)?;
+
+    // ── Statement ────────────────────────────────────────────────────────────
+    let statement: Vec<StatementRow> = data_rows(&groups, "Statement")
+        .map(|f| StatementRow {
+            feldname: c(f, 0).to_string(),
+            feldwert: c(f, 1).to_string(),
+        })
+        .collect();
+
+    // ── Kontoinformation ─────────────────────────────────────────────────────
+    let kontoinformation: Vec<KontoinformationRow> = data_rows(&groups, "Kontoinformation")
+        .map(|f| KontoinformationRow {
+            feldname: c(f, 0).to_string(),
+            feldwert: c(f, 1).to_string(),
+        })
+        .collect();
+
+    // ── Nettovermögenswert ───────────────────────────────────────────────────
+    // This table has two consecutive header rows with different schemas.
+    // We track which header is currently active as we walk the rows in order.
+    let (nettovermoegenswert, zeitgewichtete_rendite) = {
+        let mut main_rows: Vec<NettovermoegensRow> = Vec::new();
+        let mut zgr_rows: Vec<ZeitgewichteteRenditeRow> = Vec::new();
+        let mut in_zgr = false;
+
+        for (kind, fields) in groups.get("Nettovermögenswert").into_iter().flatten() {
+            match kind.as_str() {
+                "Header" => {
+                    in_zgr = c(fields, 0) == "Zeitgewichtete Rendite";
+                }
+                "Data" if !in_zgr && c(fields, 0) != "Gesamt" => {
+                    main_rows.push(NettovermoegensRow {
+                        assetklasse: c(fields, 0).to_string(),
+                        vorheriger_gesamtwert: fv(c(fields, 1)),
+                        aktuell_long: fv(c(fields, 2)),
+                        aktuell_short: fv(c(fields, 3)),
+                        aktueller_gesamtwert: fv(c(fields, 4)),
+                        veraenderung: fv(c(fields, 5)),
+                    });
+                }
+                "Data" if in_zgr => {
+                    zgr_rows.push(ZeitgewichteteRenditeRow {
+                        rendite_pct: fv(c(fields, 0)),
+                    });
+                }
+                _ => {}
+            }
+        }
+        (main_rows, zgr_rows)
+    };
+
+    // ── Veränderung des NAV ──────────────────────────────────────────────────
+    let veraenderung_nav: Vec<VeraenderungNavRow> = data_rows(&groups, "Veränderung des NAV")
+        .map(|f| VeraenderungNavRow {
+            feldname: c(f, 0).to_string(),
+            feldwert: fv(c(f, 1)),
+        })
+        .collect();
+
+    // ── Mark-to-Market-Performance-Überblick ─────────────────────────────────
+    // Skip aggregate rows (Gesamt, Gesamt (Alle Vermögenswerte), Brokers Zinsaufwand …)
+    // by requiring the category to be "Aktien" or "Devisen".
+    let mtm_performance: Vec<MtmPerformanceRow> =
+        data_rows(&groups, "Mark-to-Market-Performance-Überblick")
+            .filter(|f| matches!(c(f, 0), "Aktien" | "Devisen"))
+            .map(|f| MtmPerformanceRow {
+                vermoegenswert_kategorie: c(f, 0).to_string(),
+                symbol: c(f, 1).to_string(),
+                vorher_menge: opt_f64(c(f, 2)),
+                aktuell_menge: opt_f64(c(f, 3)),
+                vorher_kurs: opt_f64(c(f, 4)),
+                aktuell_kurs: opt_f64(c(f, 5)),
+                mtm_pl_position: fv(c(f, 6)),
+                mtm_pl_transaktion: fv(c(f, 7)),
+                mtm_pl_provisionen: fv(c(f, 8)),
+                mtm_pl_sonstige: fv(c(f, 9)),
+                mtm_pl_gesamt: fv(c(f, 10)),
+                code: c(f, 11).to_string(),
+            })
+            .collect();
+
+    // ── Übersicht zur realisierten und unrealisierten Performance ────────────
+    // Note the double space in the table name as it appears in the CSV.
+    let performance_uebersicht: Vec<PerformanceUebersichtRow> = data_rows(
+        &groups,
+        "Übersicht  zur realisierten und unrealisierten Performance",
+    )
+    .filter(|f| matches!(c(f, 0), "Aktien" | "Devisen"))
+    .map(|f| PerformanceUebersichtRow {
+        vermoegenswert_kategorie: c(f, 0).to_string(),
+        symbol: c(f, 1).to_string(),
+        kostenanpassung: fv(c(f, 2)),
+        realisiert_st_gewinn: fv(c(f, 3)),
+        realisiert_st_verlust: fv(c(f, 4)),
+        realisiert_lt_gewinn: fv(c(f, 5)),
+        realisiert_lt_verlust: fv(c(f, 6)),
+        realisiert_gesamt: fv(c(f, 7)),
+        unrealisiert_st_gewinn: fv(c(f, 8)),
+        unrealisiert_st_verlust: fv(c(f, 9)),
+        unrealisiert_lt_gewinn: fv(c(f, 10)),
+        unrealisiert_lt_verlust: fv(c(f, 11)),
+        unrealisiert_gesamt: fv(c(f, 12)),
+        gesamt: fv(c(f, 13)),
+        code: c(f, 14).to_string(),
+    })
+    .collect();
+
+    // ── Cash-Bericht ─────────────────────────────────────────────────────────
+    let cash_bericht: Vec<CashBerichtRow> = data_rows(&groups, "Cash-Bericht")
+        .map(|f| CashBerichtRow {
+            waehrungsuebersicht: c(f, 0).to_string(),
+            waehrung: c(f, 1).to_string(),
+            gesamt: fv(c(f, 2)),
+            wertpapiere: fv(c(f, 3)),
+            futures: fv(c(f, 4)),
+        })
+        .collect();
+
+    // ── Offene Positionen ─────────────────────────────────────────────────────
+    // Only "Summary" discriminator rows are individual positions;
+    // aggregate sub-rows use row-kind "Total" and are already excluded by
+    // the `data_rows` filter.
+    let offene_positionen: Vec<OffenePositionRow> = data_rows(&groups, "Offene Positionen")
+        .filter(|f| c(f, 0) == "Summary")
+        .map(|f| OffenePositionRow {
+            data_discriminator: c(f, 0).to_string(),
+            vermoegenswert_kategorie: c(f, 1).to_string(),
+            waehrung: c(f, 2).to_string(),
+            symbol: c(f, 3).to_string(),
+            menge: opt_f64(c(f, 4)),
+            multiplikator: fv(c(f, 5)),
+            einstands_kurs: fv(c(f, 6)),
+            kostenbasis: fv(c(f, 7)),
+            schlusskurs: opt_f64(c(f, 8)),
+            wert: fv(c(f, 9)),
+            unrealisierter_gv: fv(c(f, 10)),
+            code: c(f, 11).to_string(),
+        })
+        .collect();
+
+    // ── Devisenpositionen ─────────────────────────────────────────────────────
+    // The last row has category "Gesamt"; skip it.
+    let devisenpositionen: Vec<DevisenpositionRow> = data_rows(&groups, "Devisenpositionen")
+        .filter(|f| c(f, 0) == "Devisen")
+        .map(|f| DevisenpositionRow {
+            vermoegenswert_kategorie: c(f, 0).to_string(),
+            waehrung: c(f, 1).to_string(),
+            beschreibung: c(f, 2).to_string(),
+            menge: fv(c(f, 3)),
+            einstands_kurs: fv(c(f, 4)),
+            kostenbasis_eur: fv(c(f, 5)),
+            schlusskurs: fv(c(f, 6)),
+            wert_eur: fv(c(f, 7)),
+            unrealisierter_gv_eur: fv(c(f, 8)),
+            code: c(f, 9).to_string(),
+        })
+        .collect();
+
+    // ── Netto-Aktienpositionsübersicht ────────────────────────────────────────
+    let netto_aktien: Vec<NettoAktienpositionRow> =
+        data_rows(&groups, "Netto-Aktienpositionsübersicht")
+            .map(|f| NettoAktienpositionRow {
+                vermoegenswert_kategorie: c(f, 0).to_string(),
+                waehrung: c(f, 1).to_string(),
+                symbol: c(f, 2).to_string(),
+                beschreibung: c(f, 3).to_string(),
+                aktien_bei_ib: iv(c(f, 4)),
+                aktien_geliehen: iv(c(f, 5)),
+                aktien_verliehen: iv(c(f, 6)),
+                netto_aktien: iv(c(f, 7)),
+            })
+            .collect();
+
+    // ── Transaktionen ─────────────────────────────────────────────────────────
+    // The table uses two different headers (one for securities, one for FX).
+    // Both have 14 fields after skipping table name and row kind; we dispatch
+    // on `Vermögenswertkategorie` (field 1) rather than tracking the active header.
+    //
+    // SubTotal / Total rows use row-kind "SubTotal" / "Total" and are already
+    // excluded by `data_rows`.
+    let (transaktionen, devisen_transaktionen) = {
+        let mut stock: Vec<TransaktionRow> = Vec::new();
+        let mut fx: Vec<DevisenTransaktionRow> = Vec::new();
+
+        for f in data_rows(&groups, "Transaktionen") {
+            match c(f, 1) {
+                "Aktien" => stock.push(TransaktionRow {
+                    data_discriminator: c(f, 0).to_string(),
+                    vermoegenswert_kategorie: c(f, 1).to_string(),
+                    waehrung: c(f, 2).to_string(),
+                    symbol: c(f, 3).to_string(),
+                    datum_zeit: c(f, 4).to_string(),
+                    menge: fv(c(f, 5)),
+                    transaktions_kurs: fv(c(f, 6)),
+                    schlusskurs: fv(c(f, 7)),
+                    erloese: fv(c(f, 8)),
+                    prov_gebuehr: fv(c(f, 9)),
+                    basis: fv(c(f, 10)),
+                    realisierter_gv: fv(c(f, 11)),
+                    mtm_gv: fv(c(f, 12)),
+                    code: c(f, 13).to_string(),
+                }),
+                // FX header: col 7 is blank; col 9 = Provisionseink. EUR; col 12 = MTM in EUR
+                "Devisen" => fx.push(DevisenTransaktionRow {
+                    data_discriminator: c(f, 0).to_string(),
+                    vermoegenswert_kategorie: c(f, 1).to_string(),
+                    waehrung: c(f, 2).to_string(),
+                    symbol: c(f, 3).to_string(),
+                    datum_zeit: c(f, 4).to_string(),
+                    menge: fv(c(f, 5)),
+                    transaktions_kurs: fv(c(f, 6)),
+                    // col 7 intentionally blank in FX header
+                    erloese: fv(c(f, 8)),
+                    provisionen_eur: fv(c(f, 9)),
+                    // cols 10 and 11 intentionally blank in FX header
+                    mtm_eur: fv(c(f, 12)),
+                    code: c(f, 13).to_string(),
+                }),
+                _ => {} // skip empty / unexpected categories
+            }
+        }
+        (stock, fx)
+    };
+
+    // ── Transaktionsgebühren ──────────────────────────────────────────────────
+    let transaktionsgebuehren: Vec<TransaktionsgebuehrRow> =
+        data_rows(&groups, "Transaktionsgebühren")
+            .filter(|f| !c(f, 0).starts_with("Gesamt"))
+            .map(|f| TransaktionsgebuehrRow {
+                vermoegenswert_kategorie: c(f, 0).to_string(),
+                waehrung: c(f, 1).to_string(),
+                datum_zeit: c(f, 2).to_string(),
+                symbol: c(f, 3).to_string(),
+                beschreibung: c(f, 4).to_string(),
+                menge: fv(c(f, 5)),
+                handelskurs: fv(c(f, 6)),
+                betrag: fv(c(f, 7)),
+            })
+            .collect();
+
+    // ── Kapitalmaßnahmen ──────────────────────────────────────────────────────
+    let kapitalmassnnahmen: Vec<KapitalmassnahmeRow> = data_rows(&groups, "Kapitalmaßnahmen")
+        .filter(|f| !c(f, 0).starts_with("Gesamt"))
+        .map(|f| KapitalmassnahmeRow {
+            vermoegenswert_kategorie: c(f, 0).to_string(),
+            waehrung: c(f, 1).to_string(),
+            berichtsdatum: c(f, 2).to_string(),
+            datum_zeit: c(f, 3).to_string(),
+            beschreibung: c(f, 4).to_string(),
+            menge: fv(c(f, 5)),
+            erloese: fv(c(f, 6)),
+            wert: fv(c(f, 7)),
+            realisierter_gv: fv(c(f, 8)),
+            code: c(f, 9).to_string(),
+        })
+        .collect();
+
+    // ── Einzahlungen & Auszahlungen ───────────────────────────────────────────
+    // Skip summary rows: they have an empty Abwicklungsdatum (field 1).
+    let ein_auszahlungen: Vec<EinAuszahlungRow> = data_rows(&groups, "Einzahlungen & Auszahlungen")
+        .filter(|f| !c(f, 1).is_empty())
+        .map(|f| EinAuszahlungRow {
+            waehrung: c(f, 0).to_string(),
+            abwicklungsdatum: c(f, 1).to_string(),
+            beschreibung: c(f, 2).to_string(),
+            betrag: fv(c(f, 3)),
+        })
+        .collect();
+
+    // ── Dividenden ────────────────────────────────────────────────────────────
+    // Real rows have a non-empty Datum (field 1); summary rows (Gesamt, etc.) don't.
+    let dividenden: Vec<DividendeRow> = data_rows(&groups, "Dividenden")
+        .filter(|f| !c(f, 1).is_empty())
+        .map(|f| DividendeRow {
+            waehrung: c(f, 0).to_string(),
+            datum: c(f, 1).to_string(),
+            beschreibung: c(f, 2).to_string(),
+            betrag: fv(c(f, 3)),
+        })
+        .collect();
+
+    // ── Quellensteuer ─────────────────────────────────────────────────────────
+    let quellensteuer: Vec<QuellensteuerRow> = data_rows(&groups, "Quellensteuer")
+        .filter(|f| !c(f, 1).is_empty())
+        .map(|f| QuellensteuerRow {
+            waehrung: c(f, 0).to_string(),
+            datum: c(f, 1).to_string(),
+            beschreibung: c(f, 2).to_string(),
+            betrag: fv(c(f, 3)),
+            code: c(f, 4).to_string(),
+        })
+        .collect();
+
+    // ── Zinsen ────────────────────────────────────────────────────────────────
+    let zinsen: Vec<ZinsRow> = data_rows(&groups, "Zinsen")
+        .filter(|f| !c(f, 1).is_empty())
+        .map(|f| ZinsRow {
+            waehrung: c(f, 0).to_string(),
+            datum: c(f, 1).to_string(),
+            beschreibung: c(f, 2).to_string(),
+            betrag: fv(c(f, 3)),
+        })
+        .collect();
+
+    // ── Aufgelaufene Zinsen ───────────────────────────────────────────────────
+    let aufgelaufene_zinsen: Vec<AufgelaufeneZinsRow> = data_rows(&groups, "Aufgelaufene Zinsen")
+        .map(|f| AufgelaufeneZinsRow {
+            waehrung: c(f, 0).to_string(),
+            feldname: c(f, 1).to_string(),
+            feldwert: fv(c(f, 2)),
+        })
+        .collect();
+
+    // ── Veränderung im Dividendenanfall ───────────────────────────────────────
+    // Real data rows have category "Aktien" (field 0); all other rows are summary
+    // or boundary rows (Anfangsstand / Endstand / Gesamt / Gesamtwert …).
+    let dividendenanfall: Vec<DividendenanfallRow> =
+        data_rows(&groups, "Veränderung im Dividendenanfall")
+            .filter(|f| c(f, 0) == "Aktien")
+            .map(|f| DividendenanfallRow {
+                vermoegenswert_kategorie: c(f, 0).to_string(),
+                waehrung: c(f, 1).to_string(),
+                symbol: c(f, 2).to_string(),
+                datum: c(f, 3).to_string(),
+                ex_tag: c(f, 4).to_string(),
+                zahlungsdatum: c(f, 5).to_string(),
+                menge: fv(c(f, 6)),
+                steuer: fv(c(f, 7)),
+                gebuehr: fv(c(f, 8)),
+                bruttosatz: fv(c(f, 9)),
+                bruttobetrag: fv(c(f, 10)),
+                nettobetrag: fv(c(f, 11)),
+                code: c(f, 12).to_string(),
+            })
+            .collect();
+
+    // ── SYEP Securities Lent ──────────────────────────────────────────────────
+    let syep_lent: Vec<SyepLentRow> =
+        data_rows(&groups, "Stock Yield Enhancement Program Securities Lent")
+            .filter(|f| !c(f, 0).starts_with("Gesamt"))
+            .map(|f| SyepLentRow {
+                vermoegenswert_kategorie: c(f, 0).to_string(),
+                waehrung: c(f, 1).to_string(),
+                symbol: c(f, 2).to_string(),
+                transaktions_id: c(f, 3).to_string(),
+                menge: fv(c(f, 4)),
+                zinssatz_pct: fv(c(f, 5)),
+                sicherheitsbetrag: fv(c(f, 6)),
+            })
+            .collect();
+
+    // ── SYEP Securities Lent Activity ─────────────────────────────────────────
+    // The CSV header has a blank column (index 5) between "Beschreibung" and
+    // "Transaktions ID-Nummer"; we skip it.
+    let syep_activity: Vec<SyepActivityRow> = data_rows(
+        &groups,
+        "Stock Yield Enhancement Program Securities Lent Activity",
+    )
+    .filter(|f| c(f, 0) == "Aktien")
+    .map(|f| SyepActivityRow {
+        vermoegenswert_kategorie: c(f, 0).to_string(),
+        waehrung: c(f, 1).to_string(),
+        symbol: c(f, 2).to_string(),
+        datum: c(f, 3).to_string(),
+        beschreibung: c(f, 4).to_string(),
+        // field index 5 is the blank separator column
+        transaktions_id: c(f, 6).to_string(),
+        menge: fv(c(f, 7)),
+        sicherheitsbetrag: fv(c(f, 8)),
+    })
+    .collect();
+
+    // ── SYEP Interest Details ─────────────────────────────────────────────────
+    let syep_interest: Vec<SyepInterestRow> = data_rows(
+        &groups,
+        "Stock Yield Enhancement Program Securities Lent Interest Details",
+    )
+    .filter(|f| !c(f, 0).starts_with("Gesamt"))
+    .map(|f| SyepInterestRow {
+        waehrung: c(f, 0).to_string(),
+        abwicklungsdatum: c(f, 1).to_string(),
+        symbol: c(f, 2).to_string(),
+        anfangsdatum: c(f, 3).to_string(),
+        menge: fv(c(f, 4)),
+        sicherheitsbetrag: fv(c(f, 5)),
+        market_based_rate_pct: fv(c(f, 6)),
+        zinssatz_pct: fv(c(f, 7)),
+        zinsen_an_kunden: fv(c(f, 8)),
+        code: c(f, 9).to_string(),
+    })
+    .collect();
+
+    // ── Informationen zum Finanzinstrument ────────────────────────────────────
+    let finanzinstrumente: Vec<FinanzinstrumentRow> =
+        data_rows(&groups, "Informationen zum Finanzinstrument")
+            .map(|f| FinanzinstrumentRow {
+                vermoegenswert_kategorie: c(f, 0).to_string(),
+                symbol: c(f, 1).to_string(),
+                beschreibung: c(f, 2).to_string(),
+                conid: c(f, 3).to_string(),
+                wertpapier_id: c(f, 4).to_string(),
+                basiswert: c(f, 5).to_string(),
+                boerse: c(f, 6).to_string(),
+                multiplikator: fv(c(f, 7)),
+                typ: c(f, 8).to_string(),
+                code: c(f, 9).to_string(),
+            })
+            .collect();
+
+    // ── Codes ─────────────────────────────────────────────────────────────────
+    let codes: Vec<CodeRow> = data_rows(&groups, "Codes")
+        .map(|f| CodeRow {
+            code: c(f, 0).to_string(),
+            bedeutung: c(f, 1).to_string(),
+            code_forts: c(f, 2).to_string(),
+            bedeutung_forts: c(f, 3).to_string(),
+        })
+        .collect();
+
+    // ── Hinweise/Rechtshinweise ───────────────────────────────────────────────
+    let hinweise: Vec<HinweisRow> = data_rows(&groups, "Hinweise/Rechtshinweise")
+        .map(|f| HinweisRow {
+            typ: c(f, 0).to_string(),
+            hinweis: c(f, 1).to_string(),
+        })
+        .collect();
+
+    // ── Gesamt-G&V ────────────────────────────────────────────────────────────
+    // This is a standalone row: `Gesamt-G&V des Kontoauszugszeitraums,,…,<value>,`
+    // The value sits at field index 10 (after stripping the table name and the
+    // empty row-kind field).
+    let gesamt_guv = groups
+        .get("Gesamt-G&V des Kontoauszugszeitraums")
+        .and_then(|rows| rows.first())
+        .map(|(_, fields)| fv(c(fields, 10)))
+        .unwrap_or(0.0);
+
+    Ok(KontoauszugData {
+        statement,
+        kontoinformation,
+        nettovermoegenswert,
+        zeitgewichtete_rendite,
+        veraenderung_nav,
+        mtm_performance,
+        performance_uebersicht,
+        cash_bericht,
+        offene_positionen,
+        devisenpositionen,
+        netto_aktien,
+        transaktionen,
+        devisen_transaktionen,
+        transaktionsgebuehren,
+        kapitalmassnnahmen,
+        ein_auszahlungen,
+        dividenden,
+        quellensteuer,
+        zinsen,
+        aufgelaufene_zinsen,
+        dividendenanfall,
+        syep_lent,
+        syep_activity,
+        syep_interest,
+        finanzinstrumente,
+        codes,
+        hinweise,
+        gesamt_guv,
+    })
+}
+
+// ============================================================
+// main
+// ============================================================
