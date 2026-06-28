@@ -1,3 +1,4 @@
+use anyhow::{Result, anyhow};
 use std::{collections::HashMap, error::Error, path::Path};
 
 // ============================================================
@@ -436,6 +437,55 @@ pub struct KontoauszugData {
     pub gesamt_guv: f64,
 }
 
+fn convert_month(month: &str) -> Result<u32> {
+    match month {
+        "Januar" => Ok(1),
+        "Februar" => Ok(2),
+        "März" => Ok(3),
+        "April" => Ok(4),
+        "Mai" => Ok(5),
+        "Juni" => Ok(6),
+        "Juli" => Ok(7),
+        "August" => Ok(8),
+        "September" => Ok(9),
+        "Oktober" => Ok(10),
+        "November" => Ok(11),
+        "Dezember" => Ok(12),
+        _ => Err(anyhow::anyhow!("Ungültiger Monatsname")),
+    }
+}
+
+impl KontoauszugData {
+    pub fn get_timestamp(&self) -> Result<i64> {
+        let re = regex::Regex::new(r"([a-zA-Z]*) (\d+), (\d{4})$").unwrap();
+        for row in &self.statement {
+            if row.feldname == "Period" {
+                if let Some(caps) = re.captures(&row.feldwert) {
+                    if let Some(month) = caps.get(1) {
+                        let month = convert_month(month.as_str())?;
+                        if let Some(day_string) = caps.get(2) {
+                            let day: u32 = day_string.as_str().parse()?;
+                            if let Some(year_string) = caps.get(3) {
+                                let year: i32 = year_string.as_str().parse()?;
+                                let date =
+                                    chrono::NaiveDate::from_ymd_opt(year, month, day).unwrap();
+                                return Ok(date
+                                    .and_hms_opt(0, 0, 0)
+                                    .unwrap()
+                                    .and_utc()
+                                    .timestamp()
+                                    / 86400);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Err(anyhow!(
+            "Datum des Kontoauszugs konnte nicht gefunden werden"
+        ))
+    }
+}
 // ============================================================
 // Raw CSV loading
 // ============================================================

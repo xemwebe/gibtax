@@ -1,4 +1,8 @@
-use std::{collections::HashMap, error::Error, path::Path};
+use crate::error::Error;
+use std::cmp::Ordering;
+use std::{collections::HashMap, path::Path};
+
+type Result<T> = std::result::Result<T, Error>;
 
 // ============================================================
 // Field helpers (same conventions as read.rs)
@@ -103,7 +107,7 @@ pub struct TransactionHistoryData {
 /// Each entry: `(row_kind, fields_after_table_name_and_row_kind)`.
 type Groups = HashMap<String, Vec<(String, Vec<String>)>>;
 
-fn load_groups(path: &Path) -> Result<Groups, Box<dyn Error>> {
+fn load_groups(path: &Path) -> Result<Groups> {
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(false)
         .flexible(true)
@@ -141,7 +145,7 @@ fn data_rows<'a>(groups: &'a Groups, table: &str) -> impl Iterator<Item = &'a Ve
 // Parsing
 // ============================================================
 
-pub fn parse_transaction_history(path: &Path) -> Result<TransactionHistoryData, Box<dyn Error>> {
+pub fn parse_transaction_history(path: &Path) -> Result<TransactionHistoryData> {
     let groups = load_groups(path)?;
 
     // ── Statement ────────────────────────────────────────────────────────────
@@ -194,4 +198,108 @@ pub fn parse_transaction_history(path: &Path) -> Result<TransactionHistoryData, 
         summary,
         transactions,
     })
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum BuySell {
+    Sell,
+    Buy,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct FifoTransaction {
+    pub timestamp: i64,
+    pub symbol: String,
+    pub quantity: f64,
+    pub price: f64,
+    pub buy_sell: BuySell,
+}
+
+impl Eq for FifoTransaction {}
+
+impl std::cmp::PartialOrd for FifoTransaction {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl FifoTransaction {
+    pub fn get_timestamp(&self) -> i64 {
+        self.timestamp
+    }
+}
+
+impl std::cmp::Ord for FifoTransaction {
+    fn cmp(&self, other: &FifoTransaction) -> Ordering {
+        if self.timestamp != other.timestamp {
+            return other.timestamp.cmp(&self.timestamp);
+        }
+        if self.buy_sell == BuySell::Buy && self.buy_sell == BuySell::Sell {
+            return Ordering::Greater;
+        } else if self.buy_sell == BuySell::Sell && self.buy_sell == BuySell::Buy {
+            return Ordering::Less;
+        }
+        if self.quantity != other.quantity {
+            if self.quantity > other.quantity {
+                return Ordering::Greater;
+            } else {
+                return Ordering::Less;
+            }
+        }
+        if self.price != other.price {
+            if self.price > other.price {
+                return Ordering::Greater;
+            } else {
+                return Ordering::Less;
+            }
+        }
+        self.symbol.cmp(&other.symbol)
+    }
+}
+
+impl TransactionHistoryData {
+    pub fn extract_purchase_infos(&self) -> Result<Vec<FifoTransaction>> {
+        let mut fifo_trans = Vec::new();
+        for transaction in self.transactions.iter() {
+            match transaction.transaction_type.as_str() {
+                "Sell" => {
+                    if let Some(symbol) = &transaction.symbol
+                        && let Some(quantity) = transaction.quantity
+                        && let Some(price) = transaction.price
+                    {
+                        let timestamp = crate::fx::convert_date(&transaction.date)?;
+                        fifo_trans.push(FifoTransaction {
+                            timestamp,
+                            symbol: symbol.clone(),
+                            quantity: -quantity,
+                            price,
+                            buy_sell: BuySell::Sell,
+                        });
+                    } else {
+                        return Err(Error::InvalidSellTransaction);
+                    }
+                }
+                "Buy" => {
+                    if let Some(symbol) = &transaction.symbol
+                        && let Some(quantity) = transaction.quantity
+                        && let Some(price) = transaction.price
+                    {
+                        let timestamp = crate::fx::convert_date(&transaction.date)?;
+                        fifo_trans.push(FifoTransaction {
+                            timestamp,
+                            symbol: symbol.clone(),
+                            quantity,
+                            price,
+                            buy_sell: BuySell::Buy,
+                        });
+                    } else {
+                        return Err(Error::InvalidBuyTransaction);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Ok(fifo_trans)
+    }
 }

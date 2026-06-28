@@ -2,9 +2,13 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use std::{collections::HashMap, error::Error, path::PathBuf};
 
+mod error;
+mod fifo;
 mod fx;
 mod read;
 mod read_transactions;
+
+use crate::read_transactions::BuySell;
 
 #[derive(Parser, Debug)]
 #[command(name = "gibtax")]
@@ -31,6 +35,9 @@ struct FifoArgs {
     /// Pfad zu einer oder mehreren Transaction-History-Dateien (AllTransactions*.csv)
     #[arg(short, long)]
     transactions: Vec<PathBuf>,
+    /// Pfad zu einem Kontoauszug, dessen offene Position zur Initialisizerung der FiFo-Historie dienen
+    #[arg(short, long)]
+    initial_postions: Option<PathBuf>,
 }
 
 #[derive(Debug, Args)]
@@ -67,13 +74,54 @@ fn main() -> Result<(), Box<dyn Error>> {
             print_aktien_verkäufe(&d.transaktionen, &fx_rates)?;
         }
         Commands::Fifo(args) => {
+            if cli.statistic {
+                for path in args.transactions {
+                    println!("Reading transaction history {} …", path.display());
+                    let th = read_transactions::parse_transaction_history(&path)?;
+                    print_transaction_statistic(&th);
+                }
+                return Ok(());
+            }
+            let mut fifo = if let Some(initial_postions) = args.initial_postions {
+                println!("Reading {} …\n", initial_postions.display());
+                let d = read::parse_kontoauszug(&initial_postions)?;
+                let timestamp = d.get_timestamp()?;
+                fifo::FifoStore::from_open_positions(&d.offene_positionen, timestamp)?
+            } else {
+                fifo::FifoStore::new(0)
+            };
+            let mut fifo_transactions = Vec::new();
             for path in args.transactions {
                 println!("Reading transaction history {} …", path.display());
                 let th = read_transactions::parse_transaction_history(&path)?;
-                if cli.statistic {
-                    print_transaction_statistic(&th);
+                let mut transactions = th.extract_purchase_infos()?;
+                fifo_transactions.append(&mut transactions);
+            }
+            fifo_transactions.sort();
+            for transaction in fifo_transactions {
+                if transaction.get_timestamp() >= fifo.get_timestamp() {
+                    match transaction.buy_sell {
+                        BuySell::Buy => {
+                            fifo.add(
+                                &transaction.symbol,
+                                fifo::PurchaseInfo::new(transaction.quantity, transaction.price),
+                            );
+                        }
+                        BuySell::Sell => {
+                            let amount = fifo.reduce(
+                                &transaction.symbol,
+                                transaction.timestamp,
+                                transaction.quantity,
+                            )?;
+                            println!(
+                                "Purchase amount for {} of {} is {}",
+                                transaction.quantity, transaction.symbol, amount
+                            );
+                        }
+                    }
                 }
             }
+            println!("final fifo: {fifo:#?}");
         }
     }
 
@@ -175,7 +223,7 @@ fn print_dividenden(dividends: &[read::DividendeRow], fx_rates: &fx::FxRates) ->
             div.datum,
             (100.0 * div.betrag).round() / 100.0,
             div.waehrung,
-            (100.0 * eur_betrag).round() / 100.0,
+            (100.0f64 * eur_betrag).round() / 100.0,
         );
     }
     println!(

@@ -1,17 +1,12 @@
-use anyhow::{Context, Result};
+use crate::error::Error;
 use chrono::NaiveDate;
 use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
     str::FromStr,
 };
-use thiserror::Error;
 
-#[derive(Error, Debug)]
-pub enum FxError {
-    #[error("Wechselkurs für {0} nicht gefunden")]
-    CurrencyNotFoundError(String),
-}
+type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Default)]
 pub struct FxRates {
@@ -31,12 +26,12 @@ impl FxRates {
             if let Some(fx) = self
                 .tables
                 .get(währung)
-                .ok_or(FxError::CurrencyNotFoundError(währung.to_string()))?
+                .ok_or(Error::CurrencyNotFoundError(währung.to_string()))?
                 .get_fx_rate(date)
             {
                 Ok(1.0 / fx)
             } else {
-                Err(FxError::CurrencyNotFoundError(währung.to_string()).into())
+                Err(Error::CurrencyNotFoundError(währung.to_string()).into())
             }
         }
     }
@@ -55,11 +50,10 @@ pub fn read_fx_rates(fx_path: &Path) -> Result<FxRates> {
     println!("Reading fx rates from '{}'", fx_path.display());
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(true)
-        .from_path(fx_path)
-        .context(format!("Failed to parse fx rates"))?;
+        .from_path(fx_path)?;
     let mut fx_rates = FxRates::default();
     let mut header_ref = HashMap::<String, usize>::new();
-    let headers = rdr.headers().context("Header not found")?;
+    let headers = rdr.headers()?;
     for (idx, header) in headers.iter().enumerate() {
         let column_name = header.to_owned();
         if column_name.is_empty() || column_name == "Date" {
@@ -70,14 +64,17 @@ pub fn read_fx_rates(fx_path: &Path) -> Result<FxRates> {
     }
     for record in rdr.records() {
         let record = record?;
-        let date = record.get(0).to_owned().context("Row without date found")?;
+        let date = record.get(0).to_owned().ok_or(Error::RecordNotFound)?;
         let date = convert_date(date)?;
         for header in header_ref.keys() {
             if let Some(fx_rate) = record.get(header_ref[header])
                 && fx_rate != "N/A"
             {
                 if let Some(fx_table) = fx_rates.tables.get_mut(header) {
-                    fx_table.table.insert(date.to_owned(), fx_rate.parse()?);
+                    fx_table.table.insert(
+                        date.to_owned(),
+                        fx_rate.parse().map_err(|_| Error::ParsingNumberFailed)?,
+                    );
                 }
             }
         }
@@ -87,7 +84,7 @@ pub fn read_fx_rates(fx_path: &Path) -> Result<FxRates> {
 
 /// convert naive date string into days since epoch
 pub fn convert_date(date: &str) -> Result<i64> {
-    let date = NaiveDate::from_str(&date[0..10]).context("failed to parse date")?;
+    let date = NaiveDate::from_str(&date[0..10]).map_err(|_| Error::FailedToParseDate)?;
     let timestamp = date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
     Ok(timestamp / 86400)
 }
