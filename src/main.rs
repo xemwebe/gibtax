@@ -1,15 +1,40 @@
-use anyhow::{Context, Result};
-use clap::Parser;
+use anyhow::Result;
+use clap::{Args, Parser, Subcommand};
 use std::{collections::HashMap, error::Error, path::PathBuf};
 
 mod fx;
 mod read;
+mod read_transactions;
 
 #[derive(Parser, Debug)]
+#[command(name = "gibtax")]
 struct Cli {
     /// Zeige ein paar statische Daten zu den eingelesenen Kontoauszügen an
     #[arg(short, long)]
     statistic: bool,
+
+    /// Calculate FIFO information from transaction history
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Debug, Subcommand)]
+enum Commands {
+    /// Berechne FIFO Liste der Trades Calculate FIFO stack based on trade history
+    Fifo(FifoArgs),
+    /// Erstelle Report als Grundlage für deutsche Steuererklärung
+    Report(ReportArgs),
+}
+
+#[derive(Debug, Args)]
+struct FifoArgs {
+    /// Pfad zu einer oder mehreren Transaction-History-Dateien (AllTransactions*.csv)
+    #[arg(short, long)]
+    transactions: Vec<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct ReportArgs {
     /// Pfad zur Kontoauszugsdatei
     #[arg(short, long)]
     konto_auszug: PathBuf,
@@ -20,24 +45,37 @@ struct Cli {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
-    let fx_rates = fx::read_fx_rates(&&cli.fx_rates)?;
 
-    println!("Reading {} …\n", cli.konto_auszug.display());
-    let d = read::parse_kontoauszug(&cli.konto_auszug)?;
+    match cli.command {
+        Commands::Report(args) => {
+            println!("Reading {} …\n", args.konto_auszug.display());
+            let d = read::parse_kontoauszug(&args.konto_auszug)?;
+            let fx_rates = fx::read_fx_rates(&args.fx_rates)?;
 
-    if cli.statistic {
-        print_statistic(&d);
-        return Ok(());
+            if cli.statistic {
+                print_statistic(&d);
+                return Ok(());
+            }
+            println!("\nSteueraufstellung");
+            println!("");
+            print_total_interest(&d.zinsen);
+            println!("");
+            print_dividenden(&d.dividenden, &fx_rates)?;
+            println!("");
+            print_quellensteuer(&d.quellensteuer, &fx_rates)?;
+            println!("");
+            print_aktien_verkäufe(&d.transaktionen, &fx_rates)?;
+        }
+        Commands::Fifo(args) => {
+            for path in args.transactions {
+                println!("Reading transaction history {} …", path.display());
+                let th = read_transactions::parse_transaction_history(&path)?;
+                if cli.statistic {
+                    print_transaction_statistic(&th);
+                }
+            }
+        }
     }
-    println!("\nSteueraufstellung");
-    println!("");
-    print_total_interest(&d.zinsen);
-    println!("");
-    print_dividenden(&d.dividenden, &fx_rates)?;
-    println!("");
-    print_quellensteuer(&d.quellensteuer, &fx_rates)?;
-    println!("");
-    print_aktien_verkäufe(&d.transaktionen, &fx_rates);
 
     Ok(())
 }
@@ -219,6 +257,32 @@ fn print_quellensteuer(qsteuern: &[read::QuellensteuerRow], fx_rates: &fx::FxRat
     }
     println!("Gesamtbetrag über alle Jurisdiktionen (einschl. EUR): {sum:9.2} EUR");
     Ok(())
+}
+
+fn print_transaction_statistic(th: &read_transactions::TransactionHistoryData) {
+    println!("\n  Transaction History");
+    println!("  {}", "─".repeat(66));
+    println!("  {:<58} {:>6}", "Statement", th.statement.len());
+    println!("  {:<58} {:>6}", "Summary", th.summary.len());
+    println!(
+        "  {:<58} {:>6}",
+        "Transaction History",
+        th.transactions.len()
+    );
+    println!("  {}", "─".repeat(66));
+
+    // Count by transaction type
+    let mut by_type: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for t in &th.transactions {
+        *by_type.entry(t.transaction_type.as_str()).or_default() += 1;
+    }
+    let mut types: Vec<(&str, usize)> = by_type.into_iter().collect();
+    types.sort_by_key(|(name, _)| *name);
+    println!("  Transaction types:");
+    for (name, count) in types {
+        println!("    {:<54} {:>6}", name, count);
+    }
+    println!();
 }
 
 fn print_statistic(d: &read::KontoauszugData) {
