@@ -37,7 +37,16 @@ struct FifoArgs {
     transactions: Vec<PathBuf>,
     /// Pfad zu einem Kontoauszug, dessen offene Position zur Initialisizerung der FiFo-Historie dienen
     #[arg(short, long)]
-    initial_postions: Option<PathBuf>,
+    initial_positions: Option<PathBuf>,
+    /// Nur Transactions vor diesem Datum werden berücksichtigt
+    #[arg(short, long)]
+    max_time: String,
+    /// Pfad in den der FIFO status geschrieben werden soll
+    #[arg(short, long)]
+    out_file: PathBuf,
+    /// Pfad zu Datei mit den EZB-Referenzwechselkurshistorie
+    #[arg(short, long)]
+    fx_rates: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -48,6 +57,12 @@ struct ReportArgs {
     /// Pfad zu Datei mit den EZB-Referenzwechselkurshistorie
     #[arg(short, long)]
     fx_rates: PathBuf,
+    /// FIFO-Stand als Basis zur Berechnung der Veräußerungsgewinne
+    #[arg(short = 'F', long)]
+    fifo_state: Option<PathBuf>,
+    /// FIFO-Stand als Basis zur Berechnung der Veräußerungsgewinne
+    #[arg(short, long)]
+    output_fifo_state: Option<PathBuf>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -71,7 +86,30 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!("");
             print_quellensteuer(&d.quellensteuer, &fx_rates)?;
             println!("");
-            print_aktien_verkäufe(&d.transaktionen, &fx_rates)?;
+            let mut fifo = if let Some(fifo_state) = args.fifo_state {
+                let fifo_file = std::fs::File::open(&fifo_state)?;
+                let fifo: fifo::FifoStore = serde_json::from_reader(&fifo_file)?;
+                fifo
+            } else {
+                fifo::FifoStore::new(0)
+            };
+            let mut transactions = d.transaktionen;
+            transactions.sort_by(|x, y| {
+                if x.datum_zeit == y.datum_zeit {
+                    if x.menge > 0.0 {
+                        std::cmp::Ordering::Greater
+                    } else {
+                        std::cmp::Ordering::Less
+                    }
+                } else {
+                    x.datum_zeit.cmp(&y.datum_zeit)
+                }
+            });
+            print_aktien_verkäufe(&transactions, &fx_rates, &mut fifo)?;
+            if let Some(fifo_output) = args.output_fifo_state {
+                let out_file = std::fs::File::create(&fifo_output)?;
+                serde_json::to_writer_pretty(&out_file, &fifo)?;
+            }
         }
         Commands::Fifo(args) => {
             if cli.statistic {
@@ -82,11 +120,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
                 return Ok(());
             }
-            let mut fifo = if let Some(initial_postions) = args.initial_postions {
+            let fx_rates = fx::read_fx_rates(&args.fx_rates)?;
+            let mut fifo = if let Some(initial_postions) = args.initial_positions {
                 println!("Reading {} …\n", initial_postions.display());
                 let d = read::parse_kontoauszug(&initial_postions)?;
                 let timestamp = d.get_timestamp()?;
-                fifo::FifoStore::from_open_positions(&d.offene_positionen, timestamp)?
+                fifo::FifoStore::from_open_positions(&d.offene_positionen, timestamp, &fx_rates)?
             } else {
                 fifo::FifoStore::new(0)
             };
@@ -94,34 +133,37 @@ fn main() -> Result<(), Box<dyn Error>> {
             for path in args.transactions {
                 println!("Reading transaction history {} …", path.display());
                 let th = read_transactions::parse_transaction_history(&path)?;
-                let mut transactions = th.extract_purchase_infos()?;
+                let mut transactions = th.extract_purchase_infos(&fx_rates)?;
                 fifo_transactions.append(&mut transactions);
             }
             fifo_transactions.sort();
+            println!("fifo_transactions: {fifo_transactions:?}");
+            let max_time_stamp = fx::convert_date(&args.max_time)?;
             for transaction in fifo_transactions {
-                if transaction.get_timestamp() >= fifo.get_timestamp() {
+                println!("process transaction: {transaction:?}");
+                if transaction.get_timestamp() >= fifo.get_timestamp()
+                    && transaction.get_timestamp() < max_time_stamp
+                {
                     match transaction.buy_sell {
                         BuySell::Buy => {
                             fifo.add(
                                 &transaction.symbol,
+                                transaction.timestamp,
                                 fifo::PurchaseInfo::new(transaction.quantity, transaction.price),
-                            );
+                            )?;
                         }
                         BuySell::Sell => {
-                            let amount = fifo.reduce(
+                            let _ = fifo.reduce(
                                 &transaction.symbol,
                                 transaction.timestamp,
                                 transaction.quantity,
                             )?;
-                            println!(
-                                "Purchase amount for {} of {} is {}",
-                                transaction.quantity, transaction.symbol, amount
-                            );
                         }
                     }
                 }
             }
-            println!("final fifo: {fifo:#?}");
+            let out_file = std::fs::File::create(&args.out_file)?;
+            serde_json::to_writer_pretty(out_file, &fifo)?;
         }
     }
 
@@ -131,50 +173,37 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn print_aktien_verkäufe(
     transactions: &[read::TransaktionRow],
     fx_rates: &fx::FxRates,
+    fifo: &mut fifo::FifoStore,
 ) -> Result<()> {
     println!("Gewinne und Verluste aus Aktienverkäufen");
     let mut sum = 0.0;
-    let mut curr_sum = 0.0;
-    let mut eur_sum = 0.0;
-    let mut last_curr = "";
     for t in transactions {
         // Nur Verkäufe sind relevant
+        let date = fx::convert_date(&t.datum_zeit)?;
         if t.menge >= 0.0 {
-            // Nur Verkäufe sind relevant
+            // Käufe in fifo aufnehmen
+            let effektiver_kurs = (t.menge * t.transaktions_kurs + t.prov_gebuehr) / t.menge;
+            fifo.add(
+                &t.symbol,
+                date,
+                fifo::PurchaseInfo::new(t.menge, effektiver_kurs),
+            )?;
             continue;
         }
-        if last_curr != t.waehrung {
-            if last_curr != "" {
-                println!(
-                    "Summe Kapitalerträage in {last_curr}: {} {last_curr} oder {} EUR\n",
-                    (100.0f64 * curr_sum).round() / 100.0,
-                    (100.0f64 * eur_sum).round() / 100.0,
-                );
-            }
-            last_curr = &t.waehrung;
-            curr_sum = 0.0;
-            eur_sum = 0.0;
-        }
-        let date = fx::convert_date(&t.datum_zeit)?;
         let fx = fx_rates.get_fx_rate(date, &t.waehrung)?;
-        let eur_erlös = fx * t.erloese;
-        let eur_erlös_after_fee = fx * (t.erloese + t.prov_gebuehr);
-        let eur_betrag = fx * (t.erloese + t.prov_gebuehr) + t.basis;
+        let purchase_cost = fifo.reduce(&t.symbol, date, -t.menge)?;
+        let eur_betrag = fx * (t.erloese + t.prov_gebuehr) - purchase_cost;
         sum += eur_betrag;
         println!(
-            "{:10} {} {} {} {} {} {} {} {} {} EUR {} {}",
-            t.symbol,
+            "Verkauf am {:8} von {:8.2} {:6} zu {:8.2} {} oder {:8.2} EUR mit Einstand {:8.2} EUR und real. GuV {:8.2} EUR",
             t.datum_zeit,
-            t.menge,
-            t.transaktions_kurs,
-            t.basis,
+            -t.menge,
+            t.symbol,
+            t.erloese + t.prov_gebuehr,
             t.waehrung,
-            t.erloese,
-            t.waehrung,
-            t.prov_gebuehr,
+            fx * (t.erloese + t.prov_gebuehr),
+            purchase_cost,
             eur_betrag,
-            eur_erlös,
-            eur_erlös_after_fee
         )
     }
 

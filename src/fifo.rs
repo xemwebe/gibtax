@@ -1,23 +1,24 @@
 use anyhow::{Context, Result, anyhow};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 
-use crate::read;
+use crate::{fx, read};
 
 /// Store comprehensive transaction history information for FIFO based P&L caculation
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct FifoStore {
     timestamp: i64,
     history: HashMap<String, FifoInfo>,
 }
 
 /// FIFO history for single asset
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 struct FifoInfo {
     fifo: VecDeque<PurchaseInfo>,
 }
 
 /// Price and position purchased
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct PurchaseInfo {
     position: f64,
     price: f64,
@@ -34,6 +35,7 @@ impl FifoStore {
     pub fn from_open_positions(
         positions: &[read::OffenePositionRow],
         timestamp: i64,
+        fx_rates: &fx::FxRates,
     ) -> Result<Self> {
         let mut store = Self::new(timestamp);
         for position in positions {
@@ -42,22 +44,28 @@ impl FifoStore {
                     position: position
                         .menge
                         .context(format!("Feld Menge ist leer in Position {position:?}"))?,
-                    price: position.einstands_kurs,
+                    price: fx_rates.get_fx_rate(timestamp, &position.waehrung)?
+                        * position.einstands_kurs,
                 };
-                store.add(&position.symbol, purchase_info);
+                store.add(&position.symbol, timestamp, purchase_info)?;
             }
         }
 
         Ok(store)
     }
 
-    pub fn add(&mut self, symbol: &str, purchase: PurchaseInfo) {
+    pub fn add(&mut self, symbol: &str, timestamp: i64, purchase: PurchaseInfo) -> Result<()> {
+        if timestamp < self.timestamp {
+            return Err(anyhow!("FIFO Stand ist aktueller als Verkaufsdatum!"));
+        }
+        self.timestamp = timestamp;
         if let Some(fifo_info) = self.history.get_mut(symbol) {
             fifo_info.add(purchase);
         } else {
             self.history
                 .insert(symbol.to_owned(), FifoInfo::new(purchase));
         }
+        Ok(())
     }
 
     /// remove the purchase of the first position purchase and return the purchase price
@@ -68,10 +76,6 @@ impl FifoStore {
         if let Some(fifo_info) = self.history.get_mut(symbol) {
             let purchase_cost = fifo_info.reduce(position)?;
             self.timestamp = timestamp;
-            println!(
-                "position: {} timestamp: {} purchase_cost: {}",
-                position, self.timestamp, purchase_cost
-            );
             Ok(purchase_cost)
         } else {
             Err(anyhow::anyhow!("Leerverkäufe werden nicht unterstützt."))
@@ -100,10 +104,6 @@ impl FifoInfo {
         while position > 0.0 {
             let mut delete_first = false;
             if let Some(first) = self.fifo.front_mut() {
-                print!(
-                    "position: {:.20} first.price: {:.20} first.postion: {:.20}",
-                    position, first.price, first.position
-                );
                 if position < first.position {
                     purchase_amount += position * first.price;
                     first.position -= position;
@@ -114,7 +114,6 @@ impl FifoInfo {
                     first.position = 0.0;
                     delete_first = true;
                 }
-                println!(" purchase_amount: {purchase_amount}");
             } else {
                 return Err(anyhow!("Leerverkäufe werden nicht unterstützt."));
             }

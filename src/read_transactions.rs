@@ -1,4 +1,5 @@
 use crate::error::Error;
+use crate::fx;
 use std::cmp::Ordering;
 use std::{collections::HashMap, path::Path};
 
@@ -232,25 +233,25 @@ impl FifoTransaction {
 impl std::cmp::Ord for FifoTransaction {
     fn cmp(&self, other: &FifoTransaction) -> Ordering {
         if self.timestamp != other.timestamp {
-            return other.timestamp.cmp(&self.timestamp);
+            return self.timestamp.cmp(&other.timestamp);
         }
         if self.buy_sell == BuySell::Buy && self.buy_sell == BuySell::Sell {
-            return Ordering::Greater;
-        } else if self.buy_sell == BuySell::Sell && self.buy_sell == BuySell::Buy {
             return Ordering::Less;
+        } else if self.buy_sell == BuySell::Sell && self.buy_sell == BuySell::Buy {
+            return Ordering::Greater;
         }
         if self.quantity != other.quantity {
             if self.quantity > other.quantity {
-                return Ordering::Greater;
-            } else {
                 return Ordering::Less;
+            } else {
+                return Ordering::Greater;
             }
         }
         if self.price != other.price {
             if self.price > other.price {
-                return Ordering::Greater;
-            } else {
                 return Ordering::Less;
+            } else {
+                return Ordering::Greater;
             }
         }
         self.symbol.cmp(&other.symbol)
@@ -258,7 +259,7 @@ impl std::cmp::Ord for FifoTransaction {
 }
 
 impl TransactionHistoryData {
-    pub fn extract_purchase_infos(&self) -> Result<Vec<FifoTransaction>> {
+    pub fn extract_purchase_infos(&self, fx_rates: &fx::FxRates) -> Result<Vec<FifoTransaction>> {
         let mut fifo_trans = Vec::new();
         for transaction in self.transactions.iter() {
             match transaction.transaction_type.as_str() {
@@ -266,13 +267,14 @@ impl TransactionHistoryData {
                     if let Some(symbol) = &transaction.symbol
                         && let Some(quantity) = transaction.quantity
                         && let Some(price) = transaction.price
+                        && let Some(curr) = &transaction.price_currency
                     {
                         let timestamp = crate::fx::convert_date(&transaction.date)?;
                         fifo_trans.push(FifoTransaction {
                             timestamp,
                             symbol: symbol.clone(),
                             quantity: -quantity,
-                            price,
+                            price: price * fx_rates.get_fx_rate(timestamp, &curr)?,
                             buy_sell: BuySell::Sell,
                         });
                     } else {
@@ -283,13 +285,14 @@ impl TransactionHistoryData {
                     if let Some(symbol) = &transaction.symbol
                         && let Some(quantity) = transaction.quantity
                         && let Some(price) = transaction.price
+                        && let Some(curr) = &transaction.price_currency
                     {
                         let timestamp = crate::fx::convert_date(&transaction.date)?;
                         fifo_trans.push(FifoTransaction {
                             timestamp,
                             symbol: symbol.clone(),
                             quantity,
-                            price,
+                            price: price * fx_rates.get_fx_rate(timestamp, &curr)?,
                             buy_sell: BuySell::Buy,
                         });
                     } else {
