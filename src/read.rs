@@ -473,8 +473,7 @@ impl KontoauszugData {
                                     .and_hms_opt(0, 0, 0)
                                     .unwrap()
                                     .and_utc()
-                                    .timestamp()
-                                    / 86400);
+                                    .timestamp());
                             }
                         }
                     }

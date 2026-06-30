@@ -1,7 +1,13 @@
 [package]
 name = "gibtax"
+description = "Extract data from interactive brokers reports to prepare German tax forms"
 version = "0.1.0"
 edition = "2024"
+authors = [ "Mark Beinker <mwb@quantlink.de>" ]
+license = "MIT OR Apache-2.0"
+repository = "git@github.com:xemwebe/gibtax"
+readme = "README.md"
+keywords = ["finance", "tax"]
 
 [dependencies]
 anyhow = "1.0.103"

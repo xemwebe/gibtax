@@ -13,13 +13,16 @@ pub struct FxRates {
     tables: HashMap<String, FxTable>,
 }
 
+/// Wechselkurse werden als Tage seit UNIX EPOCH und Wert einer Einheit der Fremdwährung in EUR
 #[derive(Debug, Default)]
 pub struct FxTable {
     table: BTreeMap<i64, f64>,
 }
 
+const SECONDS_PER_DATE: i64 = 24 * 60 * 60;
+
 impl FxRates {
-    pub fn get_fx_rate(&self, date: i64, währung: &str) -> Result<f64> {
+    pub fn get_fx_rate(&self, timestamp: i64, währung: &str) -> Result<f64> {
         if währung == "EUR" {
             Ok(1.0)
         } else {
@@ -27,7 +30,7 @@ impl FxRates {
                 .tables
                 .get(währung)
                 .ok_or(Error::CurrencyNotFoundError(währung.to_string()))?
-                .get_fx_rate(date)
+                .get_fx_rate(timestamp)
             {
                 Ok(1.0 / fx)
             } else {
@@ -38,11 +41,13 @@ impl FxRates {
 }
 
 impl FxTable {
-    pub fn get_fx_rate(&self, date: i64) -> Option<f64> {
-        if let Some(fx) = self.table.get(&date) {
+    pub fn get_fx_rate(&self, seconds: i64) -> Option<f64> {
+        // Kovertierung von Sekunden in Tage
+        let days = seconds / SECONDS_PER_DATE;
+        if let Some(fx) = self.table.get(&days) {
             return Some(*fx);
         }
-        self.table.range(..date).next_back().map(|(_, f)| *f)
+        self.table.range(..days).next_back().map(|(_, f)| *f)
     }
 }
 
@@ -65,14 +70,14 @@ pub fn read_fx_rates(fx_path: &Path) -> Result<FxRates> {
     for record in rdr.records() {
         let record = record?;
         let date = record.get(0).to_owned().ok_or(Error::RecordNotFound)?;
-        let date = convert_date(date)?;
+        let seconds = convert_date(date)?;
         for header in header_ref.keys() {
             if let Some(fx_rate) = record.get(header_ref[header])
                 && fx_rate != "N/A"
             {
                 if let Some(fx_table) = fx_rates.tables.get_mut(header) {
                     fx_table.table.insert(
-                        date.to_owned(),
+                        seconds.to_owned() / SECONDS_PER_DATE,
                         fx_rate.parse().map_err(|_| Error::ParsingNumberFailed)?,
                     );
                 }
@@ -82,9 +87,9 @@ pub fn read_fx_rates(fx_path: &Path) -> Result<FxRates> {
     Ok(fx_rates)
 }
 
-/// convert naive date string into days since epoch
+/// Konvertiere Datum in Sekunden seit UNIX Epoch
 pub fn convert_date(date: &str) -> Result<i64> {
     let date = NaiveDate::from_str(&date[0..10]).map_err(|_| Error::FailedToParseDate)?;
     let timestamp = date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
-    Ok(timestamp / 86400)
+    Ok(timestamp)
 }
