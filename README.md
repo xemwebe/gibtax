@@ -57,7 +57,7 @@ gibtax fifo -i <IntialPosition>.csv -m "2025-01-01" -t <Transaktionshistorie1>.c
     -t <Transaktionshistorie2>.csv -o fifo_2025.json -f <Referenzwechselkurse>.csv
 ```
 Hier ist 
-  - '<InitialPosition>.csv': Ein Kontoauszug zum ermitteln der Initialen Einstandskurse, die aus den offenen Positionen ausgelesen werden (siehe oben). Dieses Flag is optional
+  - `<InitialPosition>.csv`: Ein Kontoauszug zum ermitteln der Initialen Einstandskurse, die aus den offenen Positionen ausgelesen werden (siehe oben). Dieses Flag is optional
   - Mit dem Flag `-m` gibt man das Datum an bis zu dem (exklusiv dieses Datum selbst) die Einstandskurse für spätere Verkäufe ermittelt werden.
   - Mit dem Flag `-t` können beliebig viele Reports angehängt werden, um z.B. über mehrere Jahre hinweg Käufe und Verkäufe zur Ermittlung der für 2025 gültigen Einstandskurse zu ermitteln.
   - mit dem Flag `-f` werden die tagesgenauen Referenzwechselkurse übergeben.
@@ -69,7 +69,7 @@ gibtax report -k <Kontoauszug2025>.csv -F fifo_2024.json -f <Referenzwechselkurs
 ```
 
 Hier gilt
- - '<Kontoauszug2025>.csv' ist der Kontoauszug für das komplette Jahr 2025
+ - `<Kontoauszug2025>.csv` ist der Kontoauszug für das komplette Jahr 2025
  - mit Flag `-F` wird die im mit dem Kommando `fifo` erstellte Datei zur Einstandskursermittlung angegeben
  - mit Flag `-f` übergibt man wie oben die Referenzwechselkurse
  - mit Flag `-o` kann angegeben werden, wo die neue FIFO-Datei abgelegt werden kann, die dann für die Steuererklärung 2026 verwendet werden kann.
