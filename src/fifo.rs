@@ -78,7 +78,9 @@ impl FifoStore {
             self.timestamp = timestamp;
             Ok(purchase_cost)
         } else {
-            Err(anyhow::anyhow!("Leerverkäufe werden nicht unterstützt."))
+            let date = crate::date::convert_timestamp_to_date_string(timestamp)?;
+            eprintln!("Verkauf von {position} {symbol} am {date} schlägt fehl: Leerverkauf!");
+            Err(anyhow::anyhow!("Leerverkäufe werden nicht unterstützt:"))
         }
     }
 
@@ -115,6 +117,12 @@ impl FifoInfo {
                     delete_first = true;
                 }
             } else {
+                if position < 1.0 {
+                    break;
+                }
+                eprintln!(
+                    "Verkauf von {position} assets schlägt fehl: keine offene Position vorhanden"
+                );
                 return Err(anyhow!("Leerverkäufe werden nicht unterstützt."));
             }
             if delete_first {

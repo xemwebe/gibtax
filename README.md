@@ -48,9 +48,12 @@ Folgende Reports werden verwendet:
 Ich gehe davon aus, dass der potenzielle Nutzer selbst wissen, wie sie aus dem Source-Code ein lauffähiges
 Program erstellen. Das Programm kann dann mit `gibtax --help` gestartet werden, um sich die Hilfe anzuzeigen.
 
-Es werden zwei Kommandos unterstützt. Das erste dient dazu, die Einstandskurse under Anwendung von FIFO so zu
+Es werden drei Kommandos unterstützt, die im folgenden erläutert werden.
+
+### Berechne FIFO-Stack
+Dieses Kommando dient dazu, die Einstandskurse für Aktien und ETFs under Anwendung von FIFO so zu
 ermitteln, wie sie die deutsche Steuerbehörden erwarten. Die Beispiele gehen davon aus, dass die Steuerunterlagen
-für 2025 erstellt werden sollen:
+für 2025 erstellt werden sollen. Ein Aufruf sieht wie folgt aus:
 
 ```
 gibtax fifo -i <IntialPosition>.csv -m "2025-01-01" -t <Transaktionshistorie1>.csv \
@@ -63,7 +66,10 @@ Hier ist
   - mit dem Flag `-f` werden die tagesgenauen Referenzwechselkurse übergeben.
   - mit dem Flag `-o` kann angegeben werden, wo die Ergebnisse abegespeichert werden sollen, um sie bei der späteren P&L-Ermittlung verwendet zu werden.
 
-Den eigentlichen Report erstellt man mit dem Kommando
+### Übersichtsreport erstellen
+
+Mit dem folgenden Kommando kann ein Report erstellt werden, der einne Übersicht über die wesentlichen Gewinne und Verluste erstellt. Der Aufruf erfolgt wie folgt:
+
 ```
 gibtax report -k <Kontoauszug2025>.csv -F fifo_2024.json -f <Referenzwechselkurse>.csv -o fifo_2025.json
 ```
@@ -81,11 +87,31 @@ Der Erebnisreport enthalt dann Folgendes:
 - Abgeführte Quellensteuer, nach Jurisdiktionen getrennt. Die abgeführte deutsche Quellensteuer setzt sich aus Kapitalertragssteuer und Soli-Zuschlag zusammen. Ausländische Quellensteuer muss je nach Jurisdiktion anders behandeln werden und müssen nochmal beim Finanzamt versteuert werden. 
 - Gewinne und Verluste aus Aktienverkäufe (einschließlich ETFs). Diese Gewinne/Verluste sind unversteuert und werden gemäß FIFO und Umrechnung in EUR am Kauftag (Einstandskurs) bzw. Verkaufstag ermittelt. Hier gibt es kleine Abweichungen zu dem German Tax Report, da für dessen Erstellungen nicht exakt dieselben Wechselkurse verwendeten werden. Da die Erlöse bei IB i.d.R. nicht sofort in EUR umgewandelt werden, ist es ohnehin fraglich, was der "korrekte" Wechselkurs ist.
 
+### Währungsgewinne
+
+Währungsgewinne müssen ähnlich wie Aktiengewinne ermittelt werden. Im German Tax Report werden sie aber nicht explizit
+ausgewiesen, jedenfall konnte ich sie nicht finden. Grundlage für die Erstellung ist eine Flex-Query, die eine 
+Liste alle Änderungen von Cash-Positionen in Fremdwährung erfasst (EUR-Cash Flows dürfen vorkommen, werden aber ignoriert).
+Für die Ermittlung der Einstandspreise wird FIFO wie bei Aktien angewandt, wobei als Preis immer der Wechselkurs am Tag des Cash Flows verwendet wird. Bei expliziten Umtausch von EUR und Fremdwährunge und umgekehrt kommt es dabei zu kleinen Fehlern, da nicht der tatsächlich Umtauschkurs verwendet werden. In vielen Fällen (Zinszahlungen, Dividenden in Fremdwährung, usw.) gibt es aber gar keinen expliziten Umtauschkurs, da nicht wirklich getauscht wird. In diesem Fall ist es nur konsistent, den gleichen Wechselkurs wie für die Berechnung der effektiven EUR-Äquiavalente der Dividenden zu verwenden. Der Aufruf erfolg wie folgt:
+
+```
+gibtax curr-report -c <CashBericht_2025>.csv -f <Referenzwechselkure>.csv -o curr_fifo_2025.json \
+  -F curr_fifo_2024.json
+```
+
+Hier gilt:
+
+- `<CashBericht_2025>.csv` ist das CSV-File mit den Cash-Flows. Es sollte 5 Spalten enthalten ohne Kopfzeile, wobei die erste und fünfte Spalte ignoriert werden. Spalte 2 enthält die Währung, Spalte 3 das Datum im Format "YYYY-MM-DD" und Spalte 4 den Cash-Flow-Betrag.
+- Referenzwechselkurse wie oben
+- mit dem `-F` Flag kann eine Währungs-FIFO-Datei aus dem Vorjahr, ansonsten wir davon ausgegangen das die Cash-Position zu Beginn des Jahres all gleich 0 sind.
+- mit dem `o` Flag kann die aktualisierte Währungs-FIFO-Datei gespeichert werden, um sie im nächsten Jahr wieder zu verwenden.
+
+
 ## Fehlende Features und Bugs
 
 Dieses Tool ist hilfreich für mich, und sei es nur, um mehr Transparenz in den German Tax Report zu erhalten.
 Aber dem geneigten Leser wird nicht entgangen sein, dass das eine oder andere Feature fehlt und gewisse
-Sonferfälle nicht berücksichtigt sind, wie z.B. Kapitalmaßnahmen. Manches lässt sich durch Tweaken der Input-Files
+Sonderfälle nicht berücksichtigt sind, wie z.B. Kapitalmaßnahmen. Manches lässt sich durch Tweaken der Input-Files
 fixen, anderes nicht. Ich habe eine offenes Ohr für Ergänzungs- und Änderungsvorschläge, aber wenn ich selbst
 dafür keine Bedarf habe, werden ich sie nur mit entsprechendem Pull-Request berücksichtigen. 
 Steuern machen mir kein Vergnügen, dieses Tool ist eher aus der schieren Not geboren und ich genug interessante

@@ -16,4 +16,6 @@ pub enum Error {
     ParsingNumberFailed,
     #[error("Umwandeln von String in Datum fehlgeschlagen")]
     FailedToParseDate,
+    #[error("Umwandeln von Timestamp in Datum fehlgeschlagen")]
+    FailedToConvertDate,
 }

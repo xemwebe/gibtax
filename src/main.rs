@@ -1,14 +1,16 @@
-use anyhow::Result;
-use clap::{Args, Parser, Subcommand};
-use std::{collections::HashMap, error::Error, path::PathBuf};
-
 mod cash;
+mod date;
 mod error;
 mod fifo;
 mod fx;
 mod read;
 mod read_transactions;
 
+use anyhow::Result;
+use clap::{Args, Parser, Subcommand};
+use std::{collections::HashMap, error::Error, path::PathBuf};
+
+use crate::date::convert_timestamp_to_date_string;
 use crate::read_transactions::BuySell;
 
 #[derive(Parser, Debug)]
@@ -73,6 +75,15 @@ struct CurrReportArgs {
     /// Pfad zum CashReport
     #[arg(short, long)]
     cash_report: PathBuf,
+    /// Pfad zu Datei mit den EZB-Referenzwechselkurshistorie
+    #[arg(short, long)]
+    fx_rates: PathBuf,
+    /// Währungs-FIFO-Stand als Basis zur Berechnung der Veräußerungsgewinne
+    #[arg(short = 'F', long)]
+    fifo_state: Option<PathBuf>,
+    /// Währungs-FIFO-Stand als Basis zur Berechnung der Veräußerungsgewinne
+    #[arg(short, long)]
+    output_fifo_state: Option<PathBuf>,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -176,16 +187,78 @@ fn main() -> Result<(), Box<dyn Error>> {
             serde_json::to_writer_pretty(out_file, &fifo)?;
         }
         Commands::CurrReport(args) => {
+            let path = &args.cash_report;
+            println!("Reading cash report {} …", path.display());
+            let cfs = cash::read_cash_flows(&path)?;
             if cli.statistic {
-                let path = &args.cash_report;
-                println!("Reading cash report {} …", path.display());
-                let cfs = cash::read_cash_flows(&path)?;
                 print_cash_flow_statistic(&cfs);
                 return Ok(());
+            }
+            let fx_rates = fx::read_fx_rates(&args.fx_rates)?;
+            let mut fifo = if let Some(fifo_state) = args.fifo_state {
+                let fifo_file = std::fs::File::open(&fifo_state)?;
+                let fifo: fifo::FifoStore = serde_json::from_reader(&fifo_file)?;
+                fifo
+            } else {
+                fifo::FifoStore::new(0)
+            };
+            let mut cash_flows = cfs;
+            cash_flows.sort_by(|x, y| {
+                if x.date == y.date {
+                    if x.amount < 0.0 {
+                        std::cmp::Ordering::Greater
+                    } else {
+                        std::cmp::Ordering::Less
+                    }
+                } else {
+                    x.date.cmp(&y.date)
+                }
+            });
+            print_währungs_verkäufe(&cash_flows, &fx_rates, &mut fifo)?;
+            if let Some(fifo_output) = args.output_fifo_state {
+                let out_file = std::fs::File::create(&fifo_output)?;
+                serde_json::to_writer_pretty(&out_file, &fifo)?;
             }
         }
     }
 
+    Ok(())
+}
+
+fn print_währungs_verkäufe(
+    cash_flows: &[cash::CashFlow],
+    fx_rates: &fx::FxRates,
+    fifo: &mut fifo::FifoStore,
+) -> Result<()> {
+    println!("Gewinne und Verluste aus Währungsverkäufen");
+    let mut sum = 0.0;
+    for c in cash_flows {
+        if c.curr == "EUR" {
+            // Keine Währungsgewinne aus EUR-Positionen
+            continue;
+        }
+        let fx = fx_rates.get_fx_rate(c.date, &c.curr)?;
+        // Nur Verkäufe sind relevant
+        if c.amount >= 0.0 {
+            // Käufe in fifo aufnehmen
+            fifo.add(&c.curr, c.date, fifo::PurchaseInfo::new(c.amount, fx))?;
+            continue;
+        }
+        let purchase_cost = fifo.reduce(&c.curr, c.date, -c.amount)?;
+        let eur_betrag = fx * c.amount + purchase_cost;
+        sum += eur_betrag;
+        println!(
+            "Verkauf am {} von {:8.2} {} ({:8.2} EUR) mit Einstand {:8.2} EUR und real. GuV {:8.2} EUR",
+            convert_timestamp_to_date_string(c.date)?,
+            -c.amount,
+            c.curr,
+            fx * (-c.amount),
+            purchase_cost,
+            eur_betrag,
+        )
+    }
+
+    println!("Gesamtsumme Kapitalerträge in EUR: {}", sum);
     Ok(())
 }
 
