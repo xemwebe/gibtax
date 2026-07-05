@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use std::{collections::HashMap, error::Error, path::PathBuf};
 
+mod cash;
 mod error;
 mod fifo;
 mod fx;
@@ -28,6 +29,8 @@ enum Commands {
     Fifo(FifoArgs),
     /// Erstelle Report als Grundlage für deutsche Steuererklärung
     Report(ReportArgs),
+    /// Erstelle einen Report für Wechselkursgewinne
+    CurrReport(CurrReportArgs),
 }
 
 #[derive(Debug, Args)]
@@ -63,6 +66,13 @@ struct ReportArgs {
     /// FIFO-Stand als Basis zur Berechnung der Veräußerungsgewinne
     #[arg(short, long)]
     output_fifo_state: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct CurrReportArgs {
+    /// Pfad zum CashReport
+    #[arg(short, long)]
+    cash_report: PathBuf,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -164,6 +174,15 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             let out_file = std::fs::File::create(&args.out_file)?;
             serde_json::to_writer_pretty(out_file, &fifo)?;
+        }
+        Commands::CurrReport(args) => {
+            if cli.statistic {
+                let path = &args.cash_report;
+                println!("Reading cash report {} …", path.display());
+                let cfs = cash::read_cash_flows(&path)?;
+                print_cash_flow_statistic(&cfs);
+                return Ok(());
+            }
         }
     }
 
@@ -404,4 +423,8 @@ fn print_statistic(d: &read::KontoauszugData) {
     row!("Hinweise/Rechtshinweise", d.hinweise);
     println!("  {}", "─".repeat(66));
     println!("  Gesamt-G&V: {:.2} EUR\n", d.gesamt_guv);
+}
+
+fn print_cash_flow_statistic(cfs: &[cash::CashFlow]) {
+    println!("Found {} cashflows", cfs.len());
 }
