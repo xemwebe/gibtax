@@ -1,4 +1,4 @@
-use crate::fx::convert_date;
+use crate::date::convert_date;
 use anyhow::{Result, anyhow};
 use std::{error::Error, path::Path};
 
@@ -25,7 +25,7 @@ pub fn read_cash_flows(path: &Path) -> Result<Vec<CashFlow>, Box<dyn Error>> {
         if fields.len() != 5 {
             return Err(anyhow!("Cash Bericht muss 5 Spalten enthalten.").into());
         }
-        let date = convert_date(&fields[2])?;
+        let date = convert_date(fields[2])?;
         let amount = fields[3].parse()?;
         let total = fields[4].parse()?;
         cash_flows.push(CashFlow {

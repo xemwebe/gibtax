@@ -1,5 +1,8 @@
-use anyhow::{Result, anyhow};
-use std::{collections::HashMap, error::Error, path::Path};
+use std::{collections::HashMap, path::Path};
+
+use crate::error::Error;
+
+type Result<T> = std::result::Result<T, Error>;
 
 // ============================================================
 // Numeric / field helpers
@@ -28,7 +31,7 @@ fn iv(s: &str) -> i64 {
 }
 
 /// Get field `i` from a row slice, returning `""` if out of bounds.
-fn c<'a>(row: &'a [String], i: usize) -> &'a str {
+fn c(row: &[String], i: usize) -> &str {
     row.get(i).map(String::as_str).unwrap_or("")
 }
 
@@ -451,7 +454,7 @@ fn convert_month(month: &str) -> Result<u32> {
         "Oktober" => Ok(10),
         "November" => Ok(11),
         "Dezember" => Ok(12),
-        _ => Err(anyhow::anyhow!("Ungültiger Monatsname")),
+        _ => Err(Error::InvalidMonthName(month.to_string())),
     }
 }
 
@@ -459,30 +462,22 @@ impl KontoauszugData {
     pub fn get_timestamp(&self) -> Result<i64> {
         let re = regex::Regex::new(r"([a-zA-Z]*) (\d+), (\d{4})$").unwrap();
         for row in &self.statement {
-            if row.feldname == "Period" {
-                if let Some(caps) = re.captures(&row.feldwert) {
-                    if let Some(month) = caps.get(1) {
-                        let month = convert_month(month.as_str())?;
-                        if let Some(day_string) = caps.get(2) {
-                            let day: u32 = day_string.as_str().parse()?;
-                            if let Some(year_string) = caps.get(3) {
-                                let year: i32 = year_string.as_str().parse()?;
-                                let date =
-                                    chrono::NaiveDate::from_ymd_opt(year, month, day).unwrap();
-                                return Ok(date
-                                    .and_hms_opt(0, 0, 0)
-                                    .unwrap()
-                                    .and_utc()
-                                    .timestamp());
-                            }
-                        }
+            if row.feldname == "Period"
+                && let Some(caps) = re.captures(&row.feldwert)
+                && let Some(month) = caps.get(1)
+            {
+                let month = convert_month(month.as_str())?;
+                if let Some(day_string) = caps.get(2) {
+                    let day: u32 = day_string.as_str().parse()?;
+                    if let Some(year_string) = caps.get(3) {
+                        let year: i32 = year_string.as_str().parse()?;
+                        let date = chrono::NaiveDate::from_ymd_opt(year, month, day).unwrap();
+                        return Ok(date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp());
                     }
                 }
             }
         }
-        Err(anyhow!(
-            "Datum des Kontoauszugs konnte nicht gefunden werden"
-        ))
+        Err(Error::DateNotFound)
     }
 }
 // ============================================================
@@ -493,7 +488,7 @@ impl KontoauszugData {
 /// Each entry: `(row_kind, fields_after_table_name_and_row_kind)`.
 type Groups = HashMap<String, Vec<(String, Vec<String>)>>;
 
-fn load_groups(path: &Path) -> Result<Groups, Box<dyn Error>> {
+fn load_groups(path: &Path) -> Result<Groups> {
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(false)
         .flexible(true)
@@ -531,7 +526,7 @@ fn data_rows<'a>(groups: &'a Groups, table: &str) -> impl Iterator<Item = &'a Ve
 // Parsing
 // ============================================================
 
-pub fn parse_kontoauszug(path: &Path) -> Result<KontoauszugData, Box<dyn Error>> {
+pub fn parse_kontoauszug(path: &Path) -> Result<KontoauszugData> {
     let groups = load_groups(path)?;
 
     // ── Statement ────────────────────────────────────────────────────────────
@@ -1009,6 +1004,13 @@ pub fn parse_kontoauszug(path: &Path) -> Result<KontoauszugData, Box<dyn Error>>
     })
 }
 
-// ============================================================
-// main
-// ============================================================
+impl KontoauszugData {
+    pub fn is_etf(&self, isin: &str) -> Result<bool> {
+        for info in &self.finanzinstrumente {
+            if info.wertpapier_id == isin {
+                return Ok(info.typ == "ETF");
+            }
+        }
+        Err(Error::SymbolNotFound(isin.to_string()))
+    }
+}

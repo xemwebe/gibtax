@@ -1,3 +1,5 @@
+use std::num::ParseIntError;
+
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -7,9 +9,9 @@ pub enum Error {
     #[error("Unvollständige oder fehlerhafte Verkaufstransaktion")]
     InvalidSellTransaction,
     #[error("Wechselkurs für {0} nicht gefunden")]
-    CurrencyNotFoundError(String),
+    CurrencyNotFound(String),
     #[error("Fehler beim Lesen der CSV-Datei")]
-    CsvError(#[from] csv::Error),
+    Csv(#[from] csv::Error),
     #[error("Record nicht gefunden in CSV-Datei")]
     RecordNotFound,
     #[error("Umwandeln von String in Zahl fehlgeschlagen")]
@@ -18,4 +20,14 @@ pub enum Error {
     FailedToParseDate,
     #[error("Umwandeln von Timestamp in Datum fehlgeschlagen")]
     FailedToConvertDate,
+    #[error("Symbol {0} nicht gefunden in Finanzinstrumenten")]
+    SymbolNotFound(String),
+    #[error("Ungültiger Montsname {0}")]
+    InvalidMonthName(String),
+    #[error("Invalid integer")]
+    ParseIntError(#[from] ParseIntError),
+    #[error("Datum des Kontoauszugs konnte nicht gefunden werden")]
+    DateNotFound,
+    #[error("Parsen eines Symbols von einer Beschreibung ist fehlgeschlagen")]
+    FailedToParseSymboleFromDescription,
 }

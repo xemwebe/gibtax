@@ -1,10 +1,10 @@
-use crate::error::Error;
-use chrono::NaiveDate;
 use std::{
     collections::{BTreeMap, HashMap},
     path::Path,
-    str::FromStr,
 };
+
+use crate::date::convert_date;
+use crate::error::Error;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -29,12 +29,12 @@ impl FxRates {
             if let Some(fx) = self
                 .tables
                 .get(währung)
-                .ok_or(Error::CurrencyNotFoundError(währung.to_string()))?
+                .ok_or(Error::CurrencyNotFound(währung.to_string()))?
                 .get_fx_rate(timestamp)
             {
                 Ok(1.0 / fx)
             } else {
-                Err(Error::CurrencyNotFoundError(währung.to_string()).into())
+                Err(Error::CurrencyNotFound(währung.to_string()))
             }
         }
     }
@@ -74,22 +74,14 @@ pub fn read_fx_rates(fx_path: &Path) -> Result<FxRates> {
         for header in header_ref.keys() {
             if let Some(fx_rate) = record.get(header_ref[header])
                 && fx_rate != "N/A"
+                && let Some(fx_table) = fx_rates.tables.get_mut(header)
             {
-                if let Some(fx_table) = fx_rates.tables.get_mut(header) {
-                    fx_table.table.insert(
-                        seconds.to_owned() / SECONDS_PER_DATE,
-                        fx_rate.parse().map_err(|_| Error::ParsingNumberFailed)?,
-                    );
-                }
+                fx_table.table.insert(
+                    seconds.to_owned() / SECONDS_PER_DATE,
+                    fx_rate.parse().map_err(|_| Error::ParsingNumberFailed)?,
+                );
             }
         }
     }
     Ok(fx_rates)
-}
-
-/// Konvertiere Datum in Sekunden seit UNIX Epoch
-pub fn convert_date(date: &str) -> Result<i64> {
-    let date = NaiveDate::from_str(&date[0..10]).map_err(|_| Error::FailedToParseDate)?;
-    let timestamp = date.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
-    Ok(timestamp)
 }

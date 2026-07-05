@@ -1,5 +1,6 @@
 mod cash;
 mod date;
+mod dividends;
 mod error;
 mod fifo;
 mod fx;
@@ -10,7 +11,8 @@ use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use std::{collections::HashMap, error::Error, path::PathBuf};
 
-use crate::date::convert_timestamp_to_date_string;
+use crate::date::{convert_date, convert_timestamp_to_date_string};
+use crate::dividends::Dividende;
 use crate::read_transactions::BuySell;
 
 #[derive(Parser, Debug)]
@@ -100,13 +102,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                 return Ok(());
             }
             println!("\nSteueraufstellung");
-            println!("");
+            println!();
             print_total_interest(&d.zinsen);
-            println!("");
-            print_dividenden(&d.dividenden, &fx_rates)?;
-            println!("");
+            println!();
+            let dividenden = dividends::berechne_dividenden(&d, &fx_rates)?;
+            print_all_dividenden(&dividenden)?;
+            println!();
             print_quellensteuer(&d.quellensteuer, &fx_rates)?;
-            println!("");
+            println!();
             let mut fifo = if let Some(fifo_state) = args.fifo_state {
                 let fifo_file = std::fs::File::open(&fifo_state)?;
                 let fifo: fifo::FifoStore = serde_json::from_reader(&fifo_file)?;
@@ -159,7 +162,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             fifo_transactions.sort();
             println!("fifo_transactions: {fifo_transactions:?}");
-            let max_time_stamp = fx::convert_date(&args.max_time)?;
+            let max_time_stamp = convert_date(&args.max_time)?;
             for transaction in fifo_transactions {
                 println!("process transaction: {transaction:?}");
                 if transaction.get_timestamp() >= fifo.get_timestamp()
@@ -189,7 +192,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Commands::CurrReport(args) => {
             let path = &args.cash_report;
             println!("Reading cash report {} …", path.display());
-            let cfs = cash::read_cash_flows(&path)?;
+            let cfs = cash::read_cash_flows(path)?;
             if cli.statistic {
                 print_cash_flow_statistic(&cfs);
                 return Ok(());
@@ -271,7 +274,7 @@ fn print_aktien_verkäufe(
     let mut sum = 0.0;
     for t in transactions {
         // Nur Verkäufe sind relevant
-        let date = fx::convert_date(&t.datum_zeit)?;
+        let date = convert_date(&t.datum_zeit)?;
         if t.menge >= 0.0 {
             // Käufe in fifo aufnehmen
             let effektiver_kurs = (t.menge * t.transaktions_kurs + t.prov_gebuehr) / t.menge;
@@ -313,38 +316,40 @@ fn print_total_interest(zinsen: &[read::ZinsRow]) {
     println!("#Fehler#: Gesamt Zinsen in EUR nicht gefunden");
 }
 
-fn print_dividenden(dividends: &[read::DividendeRow], fx_rates: &fx::FxRates) -> Result<()> {
-    println!("Erhaltene Dividenden");
-    let mut last_curr = "".to_string();
+fn print_all_dividenden(dividends: &[Dividende]) -> Result<()> {
+    println!("Erhaltene Dividenden auf Aktieni");
+    print_dividenden(dividends, false)?;
+    println!("\nErhaltene Dividenden auf ETF");
+    print_dividenden(dividends, true)
+}
+
+fn print_dividenden(dividends: &[Dividende], print_etf: bool) -> Result<()> {
+    let mut last_curr = "";
     let mut curr_sum = 0.0;
     let mut eur_curr_sum = 0.0;
     let mut eur_sum = 0.0;
     for div in dividends {
-        if last_curr != div.waehrung {
-            if last_curr != "" {
+        if div.is_etf != print_etf {
+            continue;
+        }
+        if last_curr != div.währung {
+            if last_curr.is_empty() {
                 println!(
                     "Summe Dividenden in {last_curr}: {} {last_curr} oder {} EUR\n",
                     (100.0f64 * curr_sum).round() / 100.0,
                     (100.0f64 * eur_curr_sum).round() / 100.0,
                 );
             }
-            last_curr = div.waehrung.clone();
+            last_curr = &div.währung;
             curr_sum = 0.0;
             eur_curr_sum = 0.0;
         }
-        let date = fx::convert_date(&div.datum)?;
-        let fx = fx_rates.get_fx_rate(date, &div.waehrung)?;
-        let eur_betrag = fx * div.betrag;
         curr_sum += div.betrag;
-        eur_sum += eur_betrag;
-        eur_curr_sum += eur_betrag;
+        eur_sum += div.eur_betrag;
+        eur_curr_sum += div.eur_betrag;
         println!(
             "{:110} {:10} {:9.2} {:3} {:9.2} EUR",
-            div.beschreibung,
-            div.datum,
-            (100.0 * div.betrag).round() / 100.0,
-            div.waehrung,
-            (100.0f64 * eur_betrag).round() / 100.0,
+            div.beschreibung, div.date, div.betrag, div.währung, div.eur_betrag,
         );
     }
     println!(
@@ -396,13 +401,13 @@ fn print_quellensteuer(qsteuern: &[read::QuellensteuerRow], fx_rates: &fx::FxRat
         let mut curr_sum = 0.0;
         for tax in &qtax_by_jurisdiction[jurisdiction] {
             if let Some(waehrung) = waehrung {
-                if waehrung != &tax.waehrung {
+                if waehrung != tax.waehrung {
                     println!("Warnung: Inkonsistente Währung in derseblen Jurisdiction!");
                 }
             } else {
                 waehrung = Some(tax.waehrung.as_str());
             }
-            let date = fx::convert_date(&tax.datum)?;
+            let date = convert_date(&tax.datum)?;
             let fx = fx_rates.get_fx_rate(date, &tax.waehrung)?;
             let eur_betrag = fx * tax.betrag;
             println!(
