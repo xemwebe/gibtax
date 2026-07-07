@@ -4,12 +4,14 @@ mod dividends;
 mod error;
 mod fifo;
 mod fx;
+mod parser;
+mod quellensteuer;
 mod read;
 mod read_transactions;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
-use std::{collections::HashMap, error::Error, path::PathBuf};
+use std::{error::Error, path::PathBuf};
 
 use crate::date::{convert_date, convert_timestamp_to_date_string};
 use crate::dividends::Dividende;
@@ -108,7 +110,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             let dividenden = dividends::berechne_dividenden(&d, &fx_rates)?;
             print_all_dividenden(&dividenden)?;
             println!();
-            print_quellensteuer(&d.quellensteuer, &fx_rates)?;
+            let (aktien_qtax, etf_qtax) = d.get_quellensteuer(&fx_rates)?;
+            println!("Abgeführte Quellensteuer auf Aktien\n{aktien_qtax}");
+            println!("Abgeführte Quellensteuer auf ETFs\n{etf_qtax}");
             println!();
             let mut fifo = if let Some(fifo_state) = args.fifo_state {
                 let fifo_file = std::fs::File::open(&fifo_state)?;
@@ -317,7 +321,7 @@ fn print_total_interest(zinsen: &[read::ZinsRow]) {
 }
 
 fn print_all_dividenden(dividends: &[Dividende]) -> Result<()> {
-    println!("Erhaltene Dividenden auf Aktieni");
+    println!("Erhaltene Dividenden auf Aktien");
     print_dividenden(dividends, false)?;
     println!("\nErhaltene Dividenden auf ETF");
     print_dividenden(dividends, true)
@@ -333,7 +337,7 @@ fn print_dividenden(dividends: &[Dividende], print_etf: bool) -> Result<()> {
             continue;
         }
         if last_curr != div.währung {
-            if last_curr.is_empty() {
+            if !last_curr.is_empty() {
                 println!(
                     "Summe Dividenden in {last_curr}: {} {last_curr} oder {} EUR\n",
                     (100.0f64 * curr_sum).round() / 100.0,
@@ -352,84 +356,17 @@ fn print_dividenden(dividends: &[Dividende], print_etf: bool) -> Result<()> {
             div.beschreibung, div.date, div.betrag, div.währung, div.eur_betrag,
         );
     }
+    if !last_curr.is_empty() {
+        println!(
+            "Summe Dividenden in {last_curr}: {} {last_curr} oder {} EUR\n",
+            (100.0f64 * curr_sum).round() / 100.0,
+            (100.0f64 * eur_curr_sum).round() / 100.0,
+        );
+    }
     println!(
         "Summe aller Dividenden in EUR: {}",
         (100.0 * eur_sum).round() / 100.0
     );
-    Ok(())
-}
-
-fn print_quellensteuer(qsteuern: &[read::QuellensteuerRow], fx_rates: &fx::FxRates) -> Result<()> {
-    let mut qtax_by_jurisdiction: HashMap<String, Vec<read::QuellensteuerRow>> = HashMap::new();
-    let re = regex::Regex::new(r"- (.{2}) Steuer$").unwrap();
-    for tax in qsteuern {
-        if let Some(caps) = re.captures(&tax.beschreibung) {
-            let jurisdiction = caps[1].to_string();
-            if let Some(val) = qtax_by_jurisdiction.get_mut(&jurisdiction) {
-                val.push(tax.clone());
-            } else {
-                qtax_by_jurisdiction.insert(jurisdiction, vec![tax.clone()]);
-            }
-        }
-    }
-
-    println!("Abgeführte deutsche Quellensteuer auf Dividenden (inkl. Solidaritätszuschlag");
-    let mut sum = 0.0;
-    for tax in &qtax_by_jurisdiction["DE"] {
-        println!(
-            "{:110} {:10} {:3} {:9.2}",
-            tax.beschreibung,
-            tax.datum,
-            tax.waehrung,
-            (100.0f64 * tax.betrag).round() / 100.0
-        );
-        sum += tax.betrag;
-    }
-    println!(
-        "Gesamtbetrag in EUR: {:9.2}",
-        (100.0f64 * sum).round() / 100.
-    );
-
-    println!("\nAbgeführte ausländische Quellensteuer nach Jurisdiction");
-    for jurisdiction in qtax_by_jurisdiction.keys() {
-        if jurisdiction == "DE" {
-            continue;
-        }
-        println!("\nJurisdiction: {jurisdiction}");
-        let mut waehrung = None;
-        let mut eur_sum = 0.0;
-        let mut curr_sum = 0.0;
-        for tax in &qtax_by_jurisdiction[jurisdiction] {
-            if let Some(waehrung) = waehrung {
-                if waehrung != tax.waehrung {
-                    println!("Warnung: Inkonsistente Währung in derseblen Jurisdiction!");
-                }
-            } else {
-                waehrung = Some(tax.waehrung.as_str());
-            }
-            let date = convert_date(&tax.datum)?;
-            let fx = fx_rates.get_fx_rate(date, &tax.waehrung)?;
-            let eur_betrag = fx * tax.betrag;
-            println!(
-                "{:110} {:10} {:9.2} {:3} {:9.2} EUR",
-                tax.beschreibung,
-                tax.datum,
-                (100.0f64 * tax.betrag).round() / 100.0,
-                tax.waehrung,
-                (100.0f64 * eur_betrag).round() / 100.0,
-            );
-            curr_sum += tax.betrag;
-            eur_sum += eur_betrag;
-            sum += eur_betrag;
-        }
-        println!(
-            "Gesamtbetrag in {}: {:.2} oder {:.2} EUR",
-            waehrung.unwrap_or("unknown"),
-            (100.0f64 * curr_sum).round() / 100.,
-            (100.0f64 * eur_sum).round() / 100.
-        );
-    }
-    println!("Gesamtbetrag über alle Jurisdiktionen (einschl. EUR): {sum:9.2} EUR");
     Ok(())
 }
 

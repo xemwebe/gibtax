@@ -1,6 +1,7 @@
 use crate::date::convert_date;
 use crate::error::Error;
 use crate::fx::FxRates;
+use crate::parser::parse_asset_ids;
 use crate::read::KontoauszugData;
 
 type Result<T> = std::result::Result<T, Error>;
@@ -24,24 +25,15 @@ pub fn berechne_dividenden(
         let date = convert_date(&div.datum)?;
         let fx = fx_rates.get_fx_rate(date, &div.waehrung)?;
         let eur_betrag = fx * div.betrag;
-        let isin = parse_isin(&div.beschreibung)?;
+        let (symbol, isin) = parse_asset_ids(&div.beschreibung)?;
         dividenden.push(Dividende {
             beschreibung: div.beschreibung.clone(),
             date: div.datum.clone(),
             betrag: (100.0 * div.betrag).round() / 100.0,
             währung: div.waehrung.clone(),
             eur_betrag: (100.0 * eur_betrag).round() / 100.0,
-            is_etf: kontoauszug.is_etf(&isin)?,
+            is_etf: kontoauszug.is_etf(&symbol, &isin)?,
         });
     }
     Ok(dividenden)
-}
-
-fn parse_isin(beschreibung: &str) -> Result<String> {
-    let re = regex::Regex::new(r"^[A-Za-z0-9]*\(([A-Z0-9]*)\)").unwrap();
-    if let Some(caps) = re.captures(beschreibung) {
-        Ok(caps[1].to_string())
-    } else {
-        Err(Error::FailedToParseSymboleFromDescription)
-    }
 }

@@ -30,4 +30,6 @@ pub enum Error {
     DateNotFound,
     #[error("Parsen eines Symbols von einer Beschreibung ist fehlgeschlagen")]
     FailedToParseSymboleFromDescription,
+    #[error("Parsen der Jurisdiktion aus Bechreibung '{0}' fehlgeschlagen")]
+    FailedToParseJurisdiction(String),
 }
