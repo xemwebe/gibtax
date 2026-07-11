@@ -8,6 +8,7 @@ mod parser;
 mod quellensteuer;
 mod read;
 mod read_transactions;
+mod veraeusserung;
 
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
@@ -121,19 +122,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             } else {
                 fifo::FifoStore::new(0)
             };
-            let mut transactions = d.transaktionen;
-            transactions.sort_by(|x, y| {
-                if x.datum_zeit == y.datum_zeit {
-                    if x.menge > 0.0 {
-                        std::cmp::Ordering::Greater
-                    } else {
-                        std::cmp::Ordering::Less
-                    }
-                } else {
-                    x.datum_zeit.cmp(&y.datum_zeit)
-                }
-            });
-            print_aktien_verkäufe(&transactions, &fx_rates, &mut fifo)?;
+            let (aktien_veräußerungsgewinne, etf_veräußerungsgewinne) =
+                veraeusserung::berechne_veräußerungsgewinne(&d, &fx_rates, &mut fifo)?;
+            println!("Gewinne aus Veräußerung von Aktien\n{aktien_veräußerungsgewinne}");
+            println!("Gewinne aus Veräußerung von ETFs\n{etf_veräußerungsgewinne}");
             if let Some(fifo_output) = args.output_fifo_state {
                 let out_file = std::fs::File::create(&fifo_output)?;
                 serde_json::to_writer_pretty(&out_file, &fifo)?;
@@ -260,47 +252,6 @@ fn print_währungs_verkäufe(
             -c.amount,
             c.curr,
             fx * (-c.amount),
-            purchase_cost,
-            eur_betrag,
-        )
-    }
-
-    println!("Gesamtsumme Kapitalerträge in EUR: {}", sum);
-    Ok(())
-}
-
-fn print_aktien_verkäufe(
-    transactions: &[read::TransaktionRow],
-    fx_rates: &fx::FxRates,
-    fifo: &mut fifo::FifoStore,
-) -> Result<()> {
-    println!("Gewinne und Verluste aus Aktienverkäufen");
-    let mut sum = 0.0;
-    for t in transactions {
-        // Nur Verkäufe sind relevant
-        let date = convert_date(&t.datum_zeit)?;
-        if t.menge >= 0.0 {
-            // Käufe in fifo aufnehmen
-            let effektiver_kurs = (t.menge * t.transaktions_kurs + t.prov_gebuehr) / t.menge;
-            fifo.add(
-                &t.symbol,
-                date,
-                fifo::PurchaseInfo::new(t.menge, effektiver_kurs),
-            )?;
-            continue;
-        }
-        let fx = fx_rates.get_fx_rate(date, &t.waehrung)?;
-        let purchase_cost = fifo.reduce(&t.symbol, date, -t.menge)?;
-        let eur_betrag = fx * (t.erloese + t.prov_gebuehr) - purchase_cost;
-        sum += eur_betrag;
-        println!(
-            "Verkauf am {:8} von {:8.2} {:6} zu {:8.2} {} oder {:8.2} EUR mit Einstand {:8.2} EUR und real. GuV {:8.2} EUR",
-            t.datum_zeit,
-            -t.menge,
-            t.symbol,
-            t.erloese + t.prov_gebuehr,
-            t.waehrung,
-            fx * (t.erloese + t.prov_gebuehr),
             purchase_cost,
             eur_betrag,
         )

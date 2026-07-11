@@ -192,7 +192,7 @@ pub struct NettoAktienpositionRow {
 
 /// `Transaktionen` – security trades (stocks, ETFs, …).
 /// Uses the first of the two `Transaktionen` headers in the CSV.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct TransaktionRow {
     pub data_discriminator: String,
@@ -1009,9 +1009,14 @@ pub fn parse_kontoauszug(path: &Path) -> Result<KontoauszugData> {
 }
 
 impl KontoauszugData {
-    pub fn is_etf(&self, symbol: &str, isin: &str) -> Result<bool> {
+    pub fn is_etf(&self, symbol: &str, isin: Option<&str>) -> Result<bool> {
         for info in &self.finanzinstrumente {
-            if info.symbol == symbol || info.wertpapier_id == isin || info.conid == isin {
+            if info.symbol == symbol {
+                return Ok(info.typ == "ETF");
+            }
+            if let Some(isin) = isin
+                && (info.wertpapier_id == isin || info.conid == isin)
+            {
                 return Ok(info.typ == "ETF");
             }
         }
@@ -1029,7 +1034,7 @@ impl KontoauszugData {
             let timestamp = convert_date(&tax.datum)?;
             let fx = fx_rates.get_fx_rate(timestamp, &tax.waehrung)?;
             let (symbol, isin) = parse_asset_ids(&tax.beschreibung)?;
-            let is_etf = self.is_etf(&symbol, &isin)?;
+            let is_etf = self.is_etf(&symbol, Some(&isin))?;
             if let Some(caps) = re.captures(&tax.beschreibung) {
                 let jurisdiction = caps[1].to_string();
                 let qtax_by_jurisdiction = if is_etf {
@@ -1052,5 +1057,20 @@ impl KontoauszugData {
             }
         }
         Ok((aktien_qsteuer, etf_qsteuer))
+    }
+    pub fn get_transactions(&self) -> Result<Vec<TransaktionRow>> {
+        let mut transactions = self.transaktionen.clone();
+        transactions.sort_by(|x, y| {
+            if x.datum_zeit == y.datum_zeit {
+                if x.menge > 0.0 {
+                    std::cmp::Ordering::Greater
+                } else {
+                    std::cmp::Ordering::Less
+                }
+            } else {
+                x.datum_zeit.cmp(&y.datum_zeit)
+            }
+        });
+        Ok(transactions)
     }
 }

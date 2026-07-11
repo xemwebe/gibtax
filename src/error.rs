@@ -32,4 +32,10 @@ pub enum Error {
     FailedToParseSymboleFromDescription,
     #[error("Parsen der Jurisdiktion aus Bechreibung '{0}' fehlgeschlagen")]
     FailedToParseJurisdiction(String),
+    #[error("Handelsmenge is leer")]
+    LeereMenge,
+    #[error("FIFO Stand ist aktueller als Verkaufsdatum")]
+    FifoIstNeuer,
+    #[error("Leerverkäufe werden nicht unterstützt:")]
+    KeineLeerverkäufe,
 }

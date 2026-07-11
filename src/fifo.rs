@@ -1,8 +1,10 @@
-use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 
+use crate::error::Error;
 use crate::{fx, read};
+
+type Result<T> = std::result::Result<T, Error>;
 
 /// Store comprehensive transaction history information for FIFO based P&L caculation
 #[derive(Debug, Serialize, Deserialize)]
@@ -41,9 +43,7 @@ impl FifoStore {
         for position in positions {
             if position.data_discriminator == "Summary" {
                 let purchase_info = PurchaseInfo {
-                    position: position
-                        .menge
-                        .context(format!("Feld Menge ist leer in Position {position:?}"))?,
+                    position: position.menge.ok_or(Error::LeereMenge)?,
                     price: fx_rates.get_fx_rate(timestamp, &position.waehrung)?
                         * position.einstands_kurs,
                 };
@@ -56,7 +56,7 @@ impl FifoStore {
 
     pub fn add(&mut self, symbol: &str, timestamp: i64, purchase: PurchaseInfo) -> Result<()> {
         if timestamp < self.timestamp {
-            return Err(anyhow!("FIFO Stand ist aktueller als Verkaufsdatum!"));
+            return Err(Error::FifoIstNeuer);
         }
         self.timestamp = timestamp;
         if let Some(fifo_info) = self.history.get_mut(symbol) {
@@ -71,7 +71,7 @@ impl FifoStore {
     /// remove the purchase of the first position purchase and return the purchase price
     pub fn reduce(&mut self, symbol: &str, timestamp: i64, position: f64) -> Result<f64> {
         if timestamp < self.timestamp {
-            return Err(anyhow!("FIFO Stand ist aktueller als Verkaufsdatum!"));
+            return Err(Error::FifoIstNeuer);
         }
         if let Some(fifo_info) = self.history.get_mut(symbol) {
             let purchase_cost = fifo_info.reduce(position)?;
@@ -80,7 +80,7 @@ impl FifoStore {
         } else {
             let date = crate::date::convert_timestamp_to_date_string(timestamp)?;
             eprintln!("Verkauf von {position} {symbol} am {date} schlägt fehl: Leerverkauf!");
-            Err(anyhow::anyhow!("Leerverkäufe werden nicht unterstützt:"))
+            Err(Error::KeineLeerverkäufe)
         }
     }
 
@@ -123,7 +123,7 @@ impl FifoInfo {
                 eprintln!(
                     "Verkauf von {position} assets schlägt fehl: keine offene Position vorhanden"
                 );
-                return Err(anyhow!("Leerverkäufe werden nicht unterstützt."));
+                return Err(Error::KeineLeerverkäufe);
             }
             if delete_first {
                 let _ = self.fifo.pop_front();
