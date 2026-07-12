@@ -8,19 +8,27 @@ mod parser;
 mod quellensteuer;
 mod read;
 mod read_transactions;
+mod report;
+mod settings;
 mod veraeusserung;
+mod wechselkurs;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand};
-use std::{error::Error, path::PathBuf};
+use config::Config;
+use std::{error::Error, io::Write, path::PathBuf};
 
 use crate::date::{convert_date, convert_timestamp_to_date_string};
-use crate::dividends::Dividende;
 use crate::read_transactions::BuySell;
+use crate::report::Report;
 
 #[derive(Parser, Debug)]
 #[command(name = "gibtax")]
 struct Cli {
+    /// Pfad für die Konfigurationsdatei
+    #[arg(short, long)]
+    config_path: Option<String>,
+
     /// Zeige ein paar statische Daten zu den eingelesenen Kontoauszügen an
     #[arg(short, long)]
     statistic: bool,
@@ -32,12 +40,21 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Erstellen einen vollständigen Report für ein bestimmtes Jahr
+    Report(ReportArgs),
     /// Berechne FIFO Liste der Trades Calculate FIFO stack based on trade history
     Fifo(FifoArgs),
-    /// Erstelle Report als Grundlage für deutsche Steuererklärung
-    Report(ReportArgs),
+    /// Erstelle einen verkürzten Report auf Basis der vorgegbenen Daten
+    SimpleReport(SimpleReportArgs),
     /// Erstelle einen Report für Wechselkursgewinne
     CurrReport(CurrReportArgs),
+}
+
+#[derive(Debug, Args)]
+struct ReportArgs {
+    #[arg(short, long)]
+    /// Jahr, für den der Report erstellt werden soll
+    jahr: u32,
 }
 
 #[derive(Debug, Args)]
@@ -60,7 +77,7 @@ struct FifoArgs {
 }
 
 #[derive(Debug, Args)]
-struct ReportArgs {
+struct SimpleReportArgs {
     /// Pfad zur Kontoauszugsdatei
     #[arg(short, long)]
     konto_auszug: PathBuf,
@@ -93,9 +110,35 @@ struct CurrReportArgs {
 
 fn main() -> Result<(), Box<dyn Error>> {
     let cli = Cli::parse();
+    let mut settings = Config::builder();
+    if let Some(config_path) = cli.config_path {
+        settings = settings.add_source(config::File::with_name(&config_path));
+    }
+    let settings = settings
+        .build()
+        .context("Laden der Konfigurationsdatei fehlgeschlagen")?;
+
+    let settings = settings
+        .try_deserialize::<settings::Settings>()
+        .context("Konfigurationsdatei laden ist fehlgeschlagen")?;
 
     match cli.command {
         Commands::Report(args) => {
+            let mut report = Report::new(args.jahr);
+            report.init(&settings)?;
+            let report_file_path = settings
+                .zwischenergebnisse
+                .join(format!("report_{}.typ", args.jahr));
+            let mut report_file = std::fs::File::create(&report_file_path)?;
+            writeln!(report_file, "{report}")
+                .context("Reportdatei schreiben ist fehlgeschlagen")?;
+            let report_json_path = settings
+                .zwischenergebnisse
+                .join(format!("report_{}.json", args.jahr));
+            let report_json_file = std::fs::File::create(&report_json_path)?;
+            serde_json::to_writer_pretty(report_json_file, &report)?;
+        }
+        Commands::SimpleReport(args) => {
             println!("Reading {} …\n", args.konto_auszug.display());
             let d = read::parse_kontoauszug(&args.konto_auszug)?;
             let fx_rates = fx::read_fx_rates(&args.fx_rates)?;
@@ -108,8 +151,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             println!();
             print_total_interest(&d.zinsen);
             println!();
-            let dividenden = dividends::berechne_dividenden(&d, &fx_rates)?;
-            print_all_dividenden(&dividenden)?;
+            let (aktien_dividenden, etf_dividenden) =
+                dividends::berechne_dividenden(&d, &fx_rates)?;
+            println!("Erhaltene Dividenden auf Aktien\n{aktien_dividenden}");
+            println!("\nErhaltene Dividenden auf ETF\n{etf_dividenden}");
             println!();
             let (aktien_qtax, etf_qtax) = d.get_quellensteuer(&fx_rates)?;
             println!("Abgeführte Quellensteuer auf Aktien\n{aktien_qtax}");
@@ -269,56 +314,6 @@ fn print_total_interest(zinsen: &[read::ZinsRow]) {
         }
     }
     println!("#Fehler#: Gesamt Zinsen in EUR nicht gefunden");
-}
-
-fn print_all_dividenden(dividends: &[Dividende]) -> Result<()> {
-    println!("Erhaltene Dividenden auf Aktien");
-    print_dividenden(dividends, false)?;
-    println!("\nErhaltene Dividenden auf ETF");
-    print_dividenden(dividends, true)
-}
-
-fn print_dividenden(dividends: &[Dividende], print_etf: bool) -> Result<()> {
-    let mut last_curr = "";
-    let mut curr_sum = 0.0;
-    let mut eur_curr_sum = 0.0;
-    let mut eur_sum = 0.0;
-    for div in dividends {
-        if div.is_etf != print_etf {
-            continue;
-        }
-        if last_curr != div.währung {
-            if !last_curr.is_empty() {
-                println!(
-                    "Summe Dividenden in {last_curr}: {} {last_curr} oder {} EUR\n",
-                    (100.0f64 * curr_sum).round() / 100.0,
-                    (100.0f64 * eur_curr_sum).round() / 100.0,
-                );
-            }
-            last_curr = &div.währung;
-            curr_sum = 0.0;
-            eur_curr_sum = 0.0;
-        }
-        curr_sum += div.betrag;
-        eur_sum += div.eur_betrag;
-        eur_curr_sum += div.eur_betrag;
-        println!(
-            "{:110} {:10} {:9.2} {:3} {:9.2} EUR",
-            div.beschreibung, div.date, div.betrag, div.währung, div.eur_betrag,
-        );
-    }
-    if !last_curr.is_empty() {
-        println!(
-            "Summe Dividenden in {last_curr}: {} {last_curr} oder {} EUR\n",
-            (100.0f64 * curr_sum).round() / 100.0,
-            (100.0f64 * eur_curr_sum).round() / 100.0,
-        );
-    }
-    println!(
-        "Summe aller Dividenden in EUR: {}",
-        (100.0 * eur_sum).round() / 100.0
-    );
-    Ok(())
 }
 
 fn print_transaction_statistic(th: &read_transactions::TransactionHistoryData) {

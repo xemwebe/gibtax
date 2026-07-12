@@ -1031,6 +1031,13 @@ impl KontoauszugData {
         let mut etf_qsteuer = QuellensteuerPerJurisdiktion::default();
         let re = regex::Regex::new(r"- (.{2}) Steuer$").unwrap();
         for tax in &self.quellensteuer {
+            if tax.beschreibung.contains("Kreditzinsen") {
+                eprintln!(
+                    "Warnung: Quellensteuer auf Zinsen werden ignoriert: {}",
+                    tax.beschreibung
+                );
+                continue;
+            }
             let timestamp = convert_date(&tax.datum)?;
             let fx = fx_rates.get_fx_rate(timestamp, &tax.waehrung)?;
             let (symbol, isin) = parse_asset_ids(&tax.beschreibung)?;

@@ -1,6 +1,6 @@
 use crate::date::convert_date;
-use anyhow::{Result, anyhow};
-use std::{error::Error, path::Path};
+use crate::error::{Error, Result};
+use std::path::Path;
 
 /// `Statement` – broker metadata (key → value pairs).
 #[derive(Debug)]
@@ -13,7 +13,7 @@ pub struct CashFlow {
     pub total: f64,
 }
 
-pub fn read_cash_flows(path: &Path) -> Result<Vec<CashFlow>, Box<dyn Error>> {
+pub fn read_cash_flows(path: &Path) -> Result<Vec<CashFlow>> {
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(true)
         .from_path(path)?;
@@ -23,7 +23,7 @@ pub fn read_cash_flows(path: &Path) -> Result<Vec<CashFlow>, Box<dyn Error>> {
         let result = result?;
         let fields: Vec<&str> = result.iter().collect();
         if fields.len() != 5 {
-            return Err(anyhow!("Cash Bericht muss 5 Spalten enthalten.").into());
+            return Err(Error::CashBerichtUngültig);
         }
         let date = convert_date(fields[2])?;
         let amount = fields[3].parse()?;

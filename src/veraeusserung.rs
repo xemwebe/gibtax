@@ -1,5 +1,7 @@
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 use crate::date::convert_date;
 use crate::error::Error;
 use crate::fifo::{FifoStore, PurchaseInfo};
@@ -8,6 +10,7 @@ use crate::read::KontoauszugData;
 
 type Result<T> = std::result::Result<T, Error>;
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Veräußerung {
     datum_zeit: String,
     menge: f64,
@@ -51,7 +54,7 @@ impl Veräußerung {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Veräußerungen {
     veräußerungen: Vec<Veräußerung>,
 }

@@ -1,4 +1,4 @@
-use std::num::ParseIntError;
+use std::num::{ParseFloatError, ParseIntError};
 
 use thiserror::Error;
 
@@ -10,7 +10,7 @@ pub enum Error {
     InvalidSellTransaction,
     #[error("Wechselkurs für {0} nicht gefunden")]
     CurrencyNotFound(String),
-    #[error("Fehler beim Lesen der CSV-Datei")]
+    #[error("Fehler beim Lesen der CSV-Datei: {0}")]
     Csv(#[from] csv::Error),
     #[error("Record nicht gefunden in CSV-Datei")]
     RecordNotFound,
@@ -24,12 +24,12 @@ pub enum Error {
     SymbolNotFound(String),
     #[error("Ungültiger Montsname {0}")]
     InvalidMonthName(String),
-    #[error("Invalid integer")]
+    #[error("Invalid integer: {0}")]
     ParseIntError(#[from] ParseIntError),
     #[error("Datum des Kontoauszugs konnte nicht gefunden werden")]
     DateNotFound,
     #[error("Parsen eines Symbols von einer Beschreibung ist fehlgeschlagen")]
-    FailedToParseSymboleFromDescription,
+    FailedToParseSymbolsFromDescription,
     #[error("Parsen der Jurisdiktion aus Bechreibung '{0}' fehlgeschlagen")]
     FailedToParseJurisdiction(String),
     #[error("Handelsmenge is leer")]
@@ -38,4 +38,18 @@ pub enum Error {
     FifoIstNeuer,
     #[error("Leerverkäufe werden nicht unterstützt:")]
     KeineLeerverkäufe,
+    #[error("Kontoauszug für das Jahr {0} feghlt")]
+    KontoauszugFehlt(u32),
+    #[error("Zeile mit Gesamtzinsen in EUR nicht gefunden")]
+    GesamtZinsenNichtGefunden,
+    #[error("Deserialisation fehlgeschlagen: {0}")]
+    DesirialisationFehlgeschlagen(#[from] serde_json::Error),
+    #[error("Cash Bericht muss 5 Spalten enthalten")]
+    CashBerichtUngültig,
+    #[error("Parsen einer Fließkommazahl fehlgeschlagen: {0}")]
+    ParseFloatFailed(#[from] ParseFloatError),
+    #[error("IO-Fehler: {0}")]
+    IoError(#[from] std::io::Error),
 }
+
+pub type Result<T> = std::result::Result<T, Error>;

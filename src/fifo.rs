@@ -7,20 +7,20 @@ use crate::{fx, read};
 type Result<T> = std::result::Result<T, Error>;
 
 /// Store comprehensive transaction history information for FIFO based P&L caculation
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct FifoStore {
     timestamp: i64,
     history: HashMap<String, FifoInfo>,
 }
 
 /// FIFO history for single asset
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
 struct FifoInfo {
     fifo: VecDeque<PurchaseInfo>,
 }
 
 /// Price and position purchased
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PurchaseInfo {
     position: f64,
     price: f64,

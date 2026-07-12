@@ -7,6 +7,7 @@ pub fn parse_asset_ids(beschreibung: &str) -> Result<(String, String)> {
     if let Some(caps) = re.captures(beschreibung) {
         Ok((caps[1].to_string(), caps[2].to_string()))
     } else {
-        Err(Error::FailedToParseSymboleFromDescription)
+        eprintln!("Kann Symbole nicht aus Beschreibung '{beschreibung}' extrahieren");
+        Err(Error::FailedToParseSymbolsFromDescription)
     }
 }

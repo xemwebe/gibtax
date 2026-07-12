@@ -1,4 +1,4 @@
-//use crate::error::Error;
+use serde::{Deserialize, Serialize};
 
 use std::{
     collections::HashMap,
@@ -7,6 +7,7 @@ use std::{
 
 //type Result<T> = std::result::Result<T, Error>;
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Quellensteuer {
     pub beschreibung: String,
     pub datum: String,
@@ -15,7 +16,7 @@ pub struct Quellensteuer {
     pub eur_betrag: f64,
 }
 
-#[derive(Default)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct QuellensteuerPerJurisdiktion {
     // Abegführte Quellenstuer nach Jufisdiktionen
     qsteuer_per_juris: HashMap<String, Vec<Quellensteuer>>,
