@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 
+use crate::asset_events::Kapitalmaßnahme;
 use crate::error::Error;
 use crate::{fx, read};
 
@@ -86,6 +87,25 @@ impl FifoStore {
 
     pub fn get_timestamp(&self) -> i64 {
         self.timestamp
+    }
+
+    pub fn contains(&self, symbol: &str) -> bool {
+        if let Some(v) = self.history.get(symbol) {
+            !v.fifo.is_empty()
+        } else {
+            false
+        }
+    }
+
+    pub fn exchange_assets(&mut self, k: &Kapitalmaßnahme, timestamp: i64) -> Result<()> {
+        let kosten = self.reduce(&k.altes_symbol, timestamp, k.alte_menge)?;
+        let neuer_preis = kosten / k.neue_menge;
+        self.add(
+            &k.neues_symbol,
+            timestamp,
+            PurchaseInfo::new(k.neue_menge, neuer_preis),
+        )?;
+        Ok(())
     }
 }
 

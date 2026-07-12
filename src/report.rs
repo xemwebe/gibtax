@@ -1,7 +1,7 @@
 use crate::cash;
 use crate::dividends::{Dividenden, berechne_dividenden};
 use crate::error::{Error, Result};
-use crate::fifo::{self, FifoStore};
+use crate::fifo::FifoStore;
 use crate::fx;
 use crate::quellensteuer::QuellensteuerPerJurisdiktion;
 use crate::read::{self, parse_kontoauszug};
@@ -80,27 +80,6 @@ impl Report {
                 }
             }
         }
-        // Try initialize FIFO from open positions ai inception
-        if !fifo_initialized {
-            if let Ok(initial_position_kontoauszug) =
-                read::parse_kontoauszug(&settings.initial_position)
-            {
-                if let Ok(timestamp) = initial_position_kontoauszug.get_timestamp() {
-                    if let Ok(fifo) = fifo::FifoStore::from_open_positions(
-                        &initial_position_kontoauszug.offene_positionen,
-                        timestamp,
-                        &fx_rates,
-                    ) {
-                        self.fifo = fifo;
-                        println!(
-                            "FIFO-Information auf Basis von offener Positionen in '{}' erstellt.",
-                            settings.initial_position.display()
-                        );
-                        fifo_initialized = true;
-                    }
-                }
-            }
-        }
         if !curr_fifo_initialized {
             let curr_fifo_in_path = &settings
                 .zwischenergebnisse
@@ -143,7 +122,7 @@ impl Report {
         (
             self.aktien_veräußerungsgewinne,
             self.etf_veräußerungsgewinne,
-        ) = berechne_veräußerungsgewinne(&kontoauszug, &fx_rates, &mut self.fifo)?;
+        ) = berechne_veräußerungsgewinne(&kontoauszug, &fx_rates, &mut self.fifo, settings)?;
 
         let cash_pfad = &settings
             .jährliche_daten

@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, path::PathBuf};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct Settings {
     pub fx_rates: PathBuf,
-    pub initial_position: PathBuf,
+    pub einstandskosten: HashMap<String, f64>,
     pub zwischenergebnisse: PathBuf,
     pub jährliche_daten: HashMap<u32, YearlySettings>,
 }

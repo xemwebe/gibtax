@@ -2,11 +2,12 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::date::convert_date;
+use crate::asset_events::{AssetEvent, AssetEventList};
 use crate::error::Error;
 use crate::fifo::{FifoStore, PurchaseInfo};
 use crate::fx::FxRates;
 use crate::read::KontoauszugData;
+use crate::settings::Settings;
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -95,35 +96,70 @@ pub fn berechne_veräußerungsgewinne(
     kontoauszug: &KontoauszugData,
     fx_rates: &FxRates,
     fifo: &mut FifoStore,
+    settings: &Settings,
 ) -> Result<(Veräußerungen, Veräußerungen)> {
     let mut aktien_veräußerungen = Veräußerungen::default();
     let mut etf_veräußerungen = Veräußerungen::default();
-    let transactions = kontoauszug.get_transactions()?;
-    for t in transactions {
-        // Nur Verkäufe sind relevant
-        let date = convert_date(&t.datum_zeit)?;
-        if t.menge >= 0.0 {
-            // Käufe in fifo aufnehmen
-            let effektiver_kurs = (t.menge * t.transaktions_kurs + t.prov_gebuehr) / t.menge;
-            fifo.add(&t.symbol, date, PurchaseInfo::new(t.menge, effektiver_kurs))?;
-            continue;
-        }
-        let fx = fx_rates.get_fx_rate(date, &t.waehrung)?;
-        let purchase_cost = fifo.reduce(&t.symbol, date, -t.menge)?;
-        let veräußerung = Veräußerung::new(
-            &t.datum_zeit,
-            -t.menge,
-            &t.symbol,
-            &t.waehrung,
-            t.erloese,
-            t.prov_gebuehr,
-            fx,
-            purchase_cost,
-        );
-        if kontoauszug.is_etf(&t.symbol, None)? {
-            etf_veräußerungen.add(veräußerung);
-        } else {
-            aktien_veräußerungen.add(veräußerung);
+    // Erstelle Liste mit Käufen/Verkäufen, Transfers und Kapitalmaßnahmen
+    let event_list = AssetEventList::von_kontoauszug(kontoauszug)?;
+    for (date, events) in event_list.events {
+        for event in &events {
+            match event {
+                AssetEvent::Kauf(t) => {
+                    // Käufe in fifo aufnehmen
+                    let effektiver_kurs =
+                        (t.menge * t.transaktions_kurs + t.prov_gebuehr) / t.menge;
+                    fifo.add(&t.symbol, date, PurchaseInfo::new(t.menge, effektiver_kurs))?;
+                }
+                AssetEvent::Verkauf(t) => {
+                    let fx = fx_rates.get_fx_rate(date, &t.waehrung)?;
+                    let purchase_cost = fifo.reduce(&t.symbol, date, -t.menge)?;
+                    let veräußerung = Veräußerung::new(
+                        &t.datum_zeit,
+                        -t.menge,
+                        &t.symbol,
+                        &t.waehrung,
+                        t.erloese,
+                        t.prov_gebuehr,
+                        fx,
+                        purchase_cost,
+                    );
+                    if kontoauszug.is_etf(&t.symbol, None)? {
+                        etf_veräußerungen.add(veräußerung);
+                    } else {
+                        aktien_veräußerungen.add(veräußerung);
+                    }
+                }
+                AssetEvent::Transfer(t) => {
+                    if t.richtung != "In" {
+                        eprintln!(
+                            "Warnung: Transferrichtung '{}' wird aktuell nicht unterstützt, ignoriere Transfer {:?}",
+                            t.richtung, t
+                        );
+                    } else if fifo.contains(&t.symbol) {
+                        eprintln!(
+                            "Warnung: Transfer von {} in existierende Position wird nicht unterstützt, ignoriere Transfer {:?}",
+                            t.symbol, t
+                        );
+                    } else {
+                        if let Some(einstandskosten) = settings.einstandskosten.get(&t.symbol) {
+                            fifo.add(
+                                &t.symbol,
+                                date,
+                                PurchaseInfo::new(t.menge, einstandskosten / t.menge),
+                            )?;
+                        } else {
+                            eprintln!(
+                                "Warnung: Für Transfer von {} fehlen die Einstandskosten, ignoriere Transfer {:?}",
+                                t.symbol, t
+                            );
+                        }
+                    }
+                }
+                AssetEvent::Kapitalmaßnahme(k) => {
+                    fifo.exchange_assets(&k, date)?;
+                }
+            }
         }
     }
 

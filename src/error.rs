@@ -30,6 +30,8 @@ pub enum Error {
     DateNotFound,
     #[error("Parsen eines Symbols von einer Beschreibung ist fehlgeschlagen")]
     FailedToParseSymbolsFromDescription,
+    #[error("Parsen der Kapitalmaßnahme aus Bechreibung '{0}' fehlgeschlagen")]
+    FailedToParseKapitalmaßnahme(String),
     #[error("Parsen der Jurisdiktion aus Bechreibung '{0}' fehlgeschlagen")]
     FailedToParseJurisdiction(String),
     #[error("Handelsmenge is leer")]

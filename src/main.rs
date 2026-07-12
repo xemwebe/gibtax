@@ -1,3 +1,4 @@
+mod asset_events;
 mod cash;
 mod date;
 mod dividends;
@@ -168,7 +169,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 fifo::FifoStore::new(0)
             };
             let (aktien_veräußerungsgewinne, etf_veräußerungsgewinne) =
-                veraeusserung::berechne_veräußerungsgewinne(&d, &fx_rates, &mut fifo)?;
+                veraeusserung::berechne_veräußerungsgewinne(
+                    &d,
+                    &fx_rates,
+                    &mut fifo,
+                    &settings::Settings::default(),
+                )?;
             println!("Gewinne aus Veräußerung von Aktien\n{aktien_veräußerungsgewinne}");
             println!("Gewinne aus Veräußerung von ETFs\n{etf_veräußerungsgewinne}");
             if let Some(fifo_output) = args.output_fifo_state {

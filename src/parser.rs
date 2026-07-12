@@ -21,3 +21,13 @@ pub fn parse_jurisdiction(beschreibung: &str) -> Result<String> {
     }
     Err(Error::FailedToParseJurisdiction(beschreibung.to_string()))
 }
+
+pub fn parse_symbols_von_kapitalmaßnahme(beschreibung: &str) -> Result<(String, String)> {
+    let re = regex::Regex::new(r"^([A-Za-z0-9. ]*)\(.*\(([A-Za-z0-9. ]*), [^)]*\)$").unwrap();
+    if let Some(caps) = re.captures(&beschreibung) {
+        return Ok((caps[1].to_string(), caps[2].to_string()));
+    }
+    Err(Error::FailedToParseKapitalmaßnahme(
+        beschreibung.to_string(),
+    ))
+}

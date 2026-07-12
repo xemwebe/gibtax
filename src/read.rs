@@ -243,8 +243,28 @@ pub struct TransaktionsgebuehrRow {
     pub betrag: f64,
 }
 
+/// `Transfers` - Übertrag von assets
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct TransferRow {
+    pub vermoegenswert_kategorie: String,
+    pub waehrung: String,
+    pub symbol: String,
+    pub datum: String,
+    pub typ: String,
+    pub richtung: String,
+    pub überweisendes_unternehmen: String,
+    pub transfer_konto: String,
+    pub menge: f64,
+    pub transferpreis: String,
+    pub marktwert: f64,
+    pub realisierter_guv: f64,
+    pub barbetrag: f64,
+    pub code: String,
+}
+
 /// `Kapitalmaßnahmen` – corporate actions.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct KapitalmassnahmeRow {
     pub vermoegenswert_kategorie: String,
@@ -425,6 +445,7 @@ pub struct KontoauszugData {
     pub devisenpositionen: Vec<DevisenpositionRow>,
     pub netto_aktien: Vec<NettoAktienpositionRow>,
     pub transaktionen: Vec<TransaktionRow>,
+    pub transfers: Vec<TransferRow>,
     pub devisen_transaktionen: Vec<DevisenTransaktionRow>,
     pub transaktionsgebuehren: Vec<TransaktionsgebuehrRow>,
     pub kapitalmassnnahmen: Vec<KapitalmassnahmeRow>,
@@ -772,6 +793,27 @@ pub fn parse_kontoauszug(path: &Path) -> Result<KontoauszugData> {
             })
             .collect();
 
+    // ── Transfers ──────────────────────────────────────────────────
+    let transfers: Vec<TransferRow> = data_rows(&groups, "Transfers")
+        .filter(|f| !c(f, 0).starts_with("Gesamt"))
+        .map(|f| TransferRow {
+            vermoegenswert_kategorie: c(f, 0).to_string(),
+            waehrung: c(f, 1).to_string(),
+            symbol: c(f, 2).to_string(),
+            datum: c(f, 3).to_string(),
+            typ: c(f, 4).to_string(),
+            richtung: c(f, 5).to_string(),
+            überweisendes_unternehmen: c(f, 6).to_string(),
+            transfer_konto: c(f, 7).to_string(),
+            menge: fv(c(f, 8)),
+            transferpreis: c(f, 9).to_string(),
+            marktwert: fv(c(f, 10)),
+            realisierter_guv: fv(c(f, 11)),
+            barbetrag: fv(c(f, 12)),
+            code: c(f, 13).to_string(),
+        })
+        .collect();
+
     // ── Kapitalmaßnahmen ──────────────────────────────────────────────────────
     let kapitalmassnnahmen: Vec<KapitalmassnahmeRow> = data_rows(&groups, "Kapitalmaßnahmen")
         .filter(|f| !c(f, 0).starts_with("Gesamt"))
@@ -989,6 +1031,7 @@ pub fn parse_kontoauszug(path: &Path) -> Result<KontoauszugData> {
         devisenpositionen,
         netto_aktien,
         transaktionen,
+        transfers,
         devisen_transaktionen,
         transaktionsgebuehren,
         kapitalmassnnahmen,
@@ -1061,20 +1104,5 @@ impl KontoauszugData {
             }
         }
         Ok((aktien_qsteuer, etf_qsteuer))
-    }
-    pub fn get_transactions(&self) -> Result<Vec<TransaktionRow>> {
-        let mut transactions = self.transaktionen.clone();
-        transactions.sort_by(|x, y| {
-            if x.datum_zeit == y.datum_zeit {
-                if x.menge > 0.0 {
-                    std::cmp::Ordering::Greater
-                } else {
-                    std::cmp::Ordering::Less
-                }
-            } else {
-                x.datum_zeit.cmp(&y.datum_zeit)
-            }
-        });
-        Ok(transactions)
     }
 }
