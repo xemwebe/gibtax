@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::Path};
 use crate::date::convert_date;
 use crate::error::Error;
 use crate::fx::FxRates;
-use crate::parser::parse_asset_ids;
+use crate::parser::{parse_asset_ids, parse_jurisdiction};
 use crate::quellensteuer::{Quellensteuer, QuellensteuerPerJurisdiktion};
 
 type Result<T> = std::result::Result<T, Error>;
@@ -1029,7 +1029,6 @@ impl KontoauszugData {
     ) -> Result<(QuellensteuerPerJurisdiktion, QuellensteuerPerJurisdiktion)> {
         let mut aktien_qsteuer = QuellensteuerPerJurisdiktion::default();
         let mut etf_qsteuer = QuellensteuerPerJurisdiktion::default();
-        let re = regex::Regex::new(r"- (.{2}) Steuer$").unwrap();
         for tax in &self.quellensteuer {
             if tax.beschreibung.contains("Kreditzinsen") {
                 eprintln!(
@@ -1042,8 +1041,7 @@ impl KontoauszugData {
             let fx = fx_rates.get_fx_rate(timestamp, &tax.waehrung)?;
             let (symbol, isin) = parse_asset_ids(&tax.beschreibung)?;
             let is_etf = self.is_etf(&symbol, Some(&isin))?;
-            if let Some(caps) = re.captures(&tax.beschreibung) {
-                let jurisdiction = caps[1].to_string();
+            if let Ok(jurisdiction) = parse_jurisdiction(&tax.beschreibung) {
                 let qtax_by_jurisdiction = if is_etf {
                     &mut etf_qsteuer
                 } else {
@@ -1060,7 +1058,6 @@ impl KontoauszugData {
                     },
                 );
             } else {
-                return Err(Error::FailedToParseJurisdiction(tax.beschreibung.clone()));
             }
         }
         Ok((aktien_qsteuer, etf_qsteuer))
