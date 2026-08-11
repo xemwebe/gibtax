@@ -12,6 +12,7 @@ mod read_transactions;
 mod report;
 mod settings;
 mod veraeusserung;
+mod vorabpauschale;
 mod wechselkurs;
 
 use anyhow::{Context, Result};
@@ -22,6 +23,7 @@ use std::{error::Error, io::Write, path::PathBuf};
 use crate::date::{convert_date, convert_timestamp_to_date_string};
 use crate::read_transactions::BuySell;
 use crate::report::Report;
+use crate::vorabpauschale::VorabpauschaleInfo;
 
 #[derive(Parser, Debug)]
 #[command(name = "gibtax")]
@@ -49,6 +51,8 @@ enum Commands {
     SimpleReport(SimpleReportArgs),
     /// Erstelle einen Report für Wechselkursgewinne
     CurrReport(CurrReportArgs),
+    /// Berechne Vorabpauschale für ETFs
+    Vorabpauschale(VorabpauschaleArgs),
 }
 
 #[derive(Debug, Args)]
@@ -107,6 +111,13 @@ struct CurrReportArgs {
     /// Währungs-FIFO-Stand als Basis zur Berechnung der Veräußerungsgewinne
     #[arg(short, long)]
     output_fifo_state: Option<PathBuf>,
+}
+
+#[derive(Debug, Args)]
+struct VorabpauschaleArgs {
+    /// Jahr, für die die Vorabschlagpauschale berechnet werden soll
+    #[arg(short, long)]
+    jahr: u32,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -269,6 +280,31 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let out_file = std::fs::File::create(&fifo_output)?;
                 serde_json::to_writer_pretty(&out_file, &fifo)?;
             }
+        }
+        Commands::Vorabpauschale(args) => {
+            let kontoauszug_anfang_pfad = &settings
+                .jährliche_daten
+                .get(&(args.jahr - 2))
+                .ok_or(error::Error::KontoauszugFehlt(args.jahr - 22))?
+                .kontoauszug;
+            let kontoauszug_start = read::parse_kontoauszug(&kontoauszug_anfang_pfad)?;
+            let kontoauszug_ende_pfad = &settings
+                .jährliche_daten
+                .get(&(args.jahr - 1))
+                .ok_or(error::Error::KontoauszugFehlt(args.jahr - 1))?
+                .kontoauszug;
+            let kontoauszug_ende = read::parse_kontoauszug(&kontoauszug_ende_pfad)?;
+            let basis_rate = settings
+                .jährliche_daten
+                .get(&(args.jahr + 1))
+                .ok_or(error::Error::BasisRateFehlt(args.jahr))?
+                .basiszins;
+            let pauschalen_infos = VorabpauschaleInfo::sammle_vorabpauschalen_infos(
+                &kontoauszug_start,
+                &kontoauszug_ende,
+                basis_rate,
+            )?;
+            println!("Pauschalen Infos:\n{pauschalen_infos:#?}");
         }
     }
 

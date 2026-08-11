@@ -13,4 +13,5 @@ pub struct Settings {
 pub struct YearlySettings {
     pub kontoauszug: PathBuf,
     pub cashbericht: PathBuf,
+    pub basiszins: f64,
 }

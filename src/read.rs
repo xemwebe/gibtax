@@ -5,6 +5,7 @@ use crate::error::Error;
 use crate::fx::FxRates;
 use crate::parser::{parse_asset_ids, parse_jurisdiction};
 use crate::quellensteuer::{Quellensteuer, QuellensteuerPerJurisdiktion};
+use crate::vorabpauschale::{EtfPosition, EtfPositionen, FondsTyp};
 
 type Result<T> = std::result::Result<T, Error>;
 
@@ -1084,25 +1085,39 @@ impl KontoauszugData {
             let fx = fx_rates.get_fx_rate(timestamp, &tax.waehrung)?;
             let (symbol, isin) = parse_asset_ids(&tax.beschreibung)?;
             let is_etf = self.is_etf(&symbol, Some(&isin))?;
-            if let Ok(jurisdiction) = parse_jurisdiction(&tax.beschreibung) {
-                let qtax_by_jurisdiction = if is_etf {
-                    &mut etf_qsteuer
-                } else {
-                    &mut aktien_qsteuer
-                };
-                qtax_by_jurisdiction.insert(
-                    jurisdiction,
-                    Quellensteuer {
-                        beschreibung: tax.beschreibung.clone(),
-                        währung: tax.waehrung.clone(),
-                        betrag: tax.betrag,
-                        eur_betrag: fx * tax.betrag,
-                        datum: tax.datum.clone(),
-                    },
-                );
+            let jurisdiction = parse_jurisdiction(&tax.beschreibung)?;
+            let qtax_by_jurisdiction = if is_etf {
+                &mut etf_qsteuer
             } else {
-            }
+                &mut aktien_qsteuer
+            };
+            qtax_by_jurisdiction.insert(
+                jurisdiction,
+                Quellensteuer {
+                    beschreibung: tax.beschreibung.clone(),
+                    währung: tax.waehrung.clone(),
+                    betrag: tax.betrag,
+                    eur_betrag: fx * tax.betrag,
+                    datum: tax.datum.clone(),
+                },
+            );
         }
         Ok((aktien_qsteuer, etf_qsteuer))
+    }
+
+    pub fn get_open_etf_positions(&self) -> Result<EtfPositionen> {
+        let mut positionen = EtfPositionen::default();
+        for position in &self.offene_positionen {
+            let is_etf = self.is_etf(&position.symbol, None)?;
+            if let Some(menge) = position.menge
+                && is_etf
+            {
+                positionen.add_position(
+                    &position.symbol,
+                    EtfPosition::new(menge, position.wert, FondsTyp::Aktien, 12),
+                );
+            }
+        }
+        Ok(positionen)
     }
 }

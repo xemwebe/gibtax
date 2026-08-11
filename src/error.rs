@@ -52,6 +52,12 @@ pub enum Error {
     ParseFloatFailed(#[from] ParseFloatError),
     #[error("IO-Fehler: {0}")]
     IoError(#[from] std::io::Error),
+    #[error("Startposition für ETF {0} nicht gefunden")]
+    PassendeEtfStartPositionFehlt(String),
+    #[error("Basisrate für das Jahr {0} nicht gefunden")]
+    BasisRateFehlt(u32),
+    #[error("ETF Endposition enthält mehr als eine Positions für Symbol {0}")]
+    EtfEndPositionUngleichEins(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
