@@ -145,6 +145,17 @@ impl Report {
         self.wechselkurs_gewinne =
             WährungsVerkäufe::parse(&cash_flows, &fx_rates, &mut self.curr_fifo)?;
 
+        if let Err(error) = self.berechne_vorabpauschalen_infos(settings, &fx_rates) {
+            log::warn!("Vorabpauschalen konnten nicht berechnet werden: {error}");
+        }
+        Ok(())
+    }
+
+    fn berechne_vorabpauschalen_infos(
+        &mut self,
+        settings: &Settings,
+        fx_rates: &crate::fx::FxRates,
+    ) -> Result<()> {
         let kontoauszug_anfang_pfad = &settings
             .jährliche_daten
             .get(&(self.jahr - 2))
@@ -166,7 +177,7 @@ impl Report {
             &kontoauszug_start,
             &kontoauszug_ende,
             basis_rate,
-            &fx_rates,
+            fx_rates,
         )?;
 
         Ok(())

@@ -40,7 +40,7 @@ pub enum Error {
     FifoIstNeuer,
     #[error("Leerverkäufe werden nicht unterstützt:")]
     KeineLeerverkäufe,
-    #[error("Kontoauszug für das Jahr {0} feghlt")]
+    #[error("Kontoauszug für das Jahr {0} fehlt")]
     KontoauszugFehlt(u32),
     #[error("Zeile mit Gesamtzinsen in EUR nicht gefunden")]
     GesamtZinsenNichtGefunden,
