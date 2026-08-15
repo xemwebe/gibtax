@@ -23,7 +23,7 @@ use std::{error::Error, io::Write, path::PathBuf};
 use crate::date::{convert_date, convert_timestamp_to_date_string};
 use crate::read_transactions::BuySell;
 use crate::report::Report;
-use crate::vorabpauschale::VorabpauschaleInfo;
+use crate::vorabpauschale::Vorabpauschalen;
 
 #[derive(Parser, Debug)]
 #[command(name = "gibtax")]
@@ -31,10 +31,6 @@ struct Cli {
     /// Pfad für die Konfigurationsdatei
     #[arg(short, long)]
     config_path: Option<String>,
-
-    /// Zeige ein paar statische Daten zu den eingelesenen Kontoauszügen an
-    #[arg(short, long)]
-    statistic: bool,
 
     /// Calculate FIFO information from transaction history
     #[command(subcommand)]
@@ -118,9 +114,15 @@ struct VorabpauschaleArgs {
     /// Jahr, für die die Vorabschlagpauschale berechnet werden soll
     #[arg(short, long)]
     jahr: u32,
+    /// Pfad zu Datei mit den EZB-Referenzwechselkurshistorie
+    #[arg(short, long)]
+    fx_rates: PathBuf,
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    simple_logger::init_with_env().context("failed to init logger")?;
+    log::info!("Logging has started.");
+
     let cli = Cli::parse();
     let mut settings = Config::builder();
     if let Some(config_path) = cli.config_path {
@@ -155,10 +157,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             let d = read::parse_kontoauszug(&args.konto_auszug)?;
             let fx_rates = fx::read_fx_rates(&args.fx_rates)?;
 
-            if cli.statistic {
-                print_statistic(&d);
-                return Ok(());
-            }
             println!("\nSteueraufstellung");
             println!();
             print_total_interest(&d.zinsen);
@@ -194,14 +192,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
         Commands::Fifo(args) => {
-            if cli.statistic {
-                for path in args.transactions {
-                    println!("Reading transaction history {} …", path.display());
-                    let th = read_transactions::parse_transaction_history(&path)?;
-                    print_transaction_statistic(&th);
-                }
-                return Ok(());
-            }
             let fx_rates = fx::read_fx_rates(&args.fx_rates)?;
             let mut fifo = if let Some(initial_postions) = args.initial_positions {
                 println!("Reading {} …\n", initial_postions.display());
@@ -251,10 +241,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             let path = &args.cash_report;
             println!("Reading cash report {} …", path.display());
             let cfs = cash::read_cash_flows(path)?;
-            if cli.statistic {
-                print_cash_flow_statistic(&cfs);
-                return Ok(());
-            }
             let fx_rates = fx::read_fx_rates(&args.fx_rates)?;
             let mut fifo = if let Some(fifo_state) = args.fifo_state {
                 let fifo_file = std::fs::File::open(&fifo_state)?;
@@ -282,6 +268,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
         }
         Commands::Vorabpauschale(args) => {
+            let fx_rates = fx::read_fx_rates(&args.fx_rates)?;
             let kontoauszug_anfang_pfad = &settings
                 .jährliche_daten
                 .get(&(args.jahr - 2))
@@ -299,12 +286,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .get(&(args.jahr + 1))
                 .ok_or(error::Error::BasisRateFehlt(args.jahr))?
                 .basiszins;
-            let pauschalen_infos = VorabpauschaleInfo::sammle_vorabpauschalen_infos(
+            let vorabpauschalen = Vorabpauschalen::sammle_vorabpauschalen_infos(
                 &kontoauszug_start,
                 &kontoauszug_ende,
                 basis_rate,
+                &fx_rates,
             )?;
-            println!("Pauschalen Infos:\n{pauschalen_infos:#?}");
+            println!("Vorabpauschalen:\n{vorabpauschalen}");
         }
     }
 
@@ -356,78 +344,4 @@ fn print_total_interest(zinsen: &[read::ZinsRow]) {
         }
     }
     println!("#Fehler#: Gesamt Zinsen in EUR nicht gefunden");
-}
-
-fn print_transaction_statistic(th: &read_transactions::TransactionHistoryData) {
-    println!("\n  Transaction History");
-    println!("  {}", "─".repeat(66));
-    println!("  {:<58} {:>6}", "Statement", th.statement.len());
-    println!("  {:<58} {:>6}", "Summary", th.summary.len());
-    println!(
-        "  {:<58} {:>6}",
-        "Transaction History",
-        th.transactions.len()
-    );
-    println!("  {}", "─".repeat(66));
-
-    // Count by transaction type
-    let mut by_type: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-    for t in &th.transactions {
-        *by_type.entry(t.transaction_type.as_str()).or_default() += 1;
-    }
-    let mut types: Vec<(&str, usize)> = by_type.into_iter().collect();
-    types.sort_by_key(|(name, _)| *name);
-    println!("  Transaction types:");
-    for (name, count) in types {
-        println!("    {:<54} {:>6}", name, count);
-    }
-    println!();
-}
-
-fn print_statistic(d: &read::KontoauszugData) {
-    // ── Summary table ─────────────────────────────────────────────────────────
-    macro_rules! row {
-        ($label:expr, $vec:expr) => {
-            println!("  {:<58} {:>6}", $label, $vec.len());
-        };
-    }
-
-    println!("  {:<58} {:>6}", "Table", "Rows");
-    println!("  {}", "─".repeat(66));
-    row!("Statement", d.statement);
-    row!("Kontoinformation", d.kontoinformation);
-    row!("Nettovermögenswert", d.nettovermoegenswert);
-    row!("  └─ Zeitgewichtete Rendite", d.zeitgewichtete_rendite);
-    row!("Veränderung des NAV", d.veraenderung_nav);
-    row!("Mark-to-Market-Performance-Überblick", d.mtm_performance);
-    row!(
-        "Übersicht realisierte/unrealisierte Perf.",
-        d.performance_uebersicht
-    );
-    row!("Cash-Bericht", d.cash_bericht);
-    row!("Offene Positionen", d.offene_positionen);
-    row!("Devisenpositionen", d.devisenpositionen);
-    row!("Netto-Aktienpositionsübersicht", d.netto_aktien);
-    row!("Transaktionen (Wertpapiere)", d.transaktionen);
-    row!("Transaktionen (Devisen)", d.devisen_transaktionen);
-    row!("Transaktionsgebühren", d.transaktionsgebuehren);
-    row!("Kapitalmaßnahmen", d.kapitalmassnnahmen);
-    row!("Einzahlungen & Auszahlungen", d.ein_auszahlungen);
-    row!("Dividenden", d.dividenden);
-    row!("Quellensteuer", d.quellensteuer);
-    row!("Zinsen", d.zinsen);
-    row!("Aufgelaufene Zinsen", d.aufgelaufene_zinsen);
-    row!("Veränderung im Dividendenanfall", d.dividendenanfall);
-    row!("SYEP Securities Lent", d.syep_lent);
-    row!("SYEP Securities Lent Activity", d.syep_activity);
-    row!("SYEP Securities Lent Interest Details", d.syep_interest);
-    row!("Informationen zum Finanzinstrument", d.finanzinstrumente);
-    row!("Codes", d.codes);
-    row!("Hinweise/Rechtshinweise", d.hinweise);
-    println!("  {}", "─".repeat(66));
-    println!("  Gesamt-G&V: {:.2} EUR\n", d.gesamt_guv);
-}
-
-fn print_cash_flow_statistic(cfs: &[cash::CashFlow]) {
-    println!("Found {} cashflows", cfs.len());
 }

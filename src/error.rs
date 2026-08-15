@@ -58,6 +58,8 @@ pub enum Error {
     BasisRateFehlt(u32),
     #[error("ETF Endposition enthält mehr als eine Positions für Symbol {0}")]
     EtfEndPositionUngleichEins(String),
+    #[error("Failed to parse header of table group")]
+    FailedToParseHeaderOfTable(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

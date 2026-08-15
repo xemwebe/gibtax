@@ -66,7 +66,7 @@ impl AssetEventList {
         for k in kapitalmaßnahmen {
             if k.beschreibung.contains("Dividende") {
                 // ignore Maßnahmen bzgl. Dividenden
-                println!("Warnung: Kapitalmaßnahme {} wird ignoriert", k.beschreibung);
+                log::warn!("Kapitalmaßnahme {} wird ignoriert", k.beschreibung);
                 continue;
             }
             let timestamp = convert_date(&k.datum_zeit)?;

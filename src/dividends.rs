@@ -35,9 +35,9 @@ pub fn berechne_dividenden(
             betrag: (100.0 * div.betrag).round() / 100.0,
             währung: div.waehrung.clone(),
             eur_betrag: (100.0 * eur_betrag).round() / 100.0,
-            is_etf: kontoauszug.is_etf(&symbol, Some(&isin))?,
+            is_etf: kontoauszug.finanzinstrumente.is_etf(&symbol, Some(&isin))?,
         };
-        if kontoauszug.is_etf(&symbol, Some(&isin))? {
+        if kontoauszug.finanzinstrumente.is_etf(&symbol, Some(&isin))? {
             etf_dividenden.add(dividende);
         } else {
             aktien_dividenden.add(dividende);

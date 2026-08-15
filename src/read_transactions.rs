@@ -96,8 +96,6 @@ pub struct TransactionHistoryRow {
 // ============================================================
 
 pub struct TransactionHistoryData {
-    pub statement: Vec<StatementRow>,
-    pub summary: Vec<SummaryRow>,
     pub transactions: Vec<TransactionHistoryRow>,
 }
 
@@ -150,22 +148,6 @@ fn data_rows<'a>(groups: &'a Groups, table: &str) -> impl Iterator<Item = &'a Ve
 pub fn parse_transaction_history(path: &Path) -> Result<TransactionHistoryData> {
     let groups = load_groups(path)?;
 
-    // ── Statement ────────────────────────────────────────────────────────────
-    let statement: Vec<StatementRow> = data_rows(&groups, "Statement")
-        .map(|f| StatementRow {
-            feldname: c(f, 0).to_string(),
-            feldwert: c(f, 1).to_string(),
-        })
-        .collect();
-
-    // ── Summary ───────────────────────────────────────────────────────────────
-    let summary: Vec<SummaryRow> = data_rows(&groups, "Summary")
-        .map(|f| SummaryRow {
-            feldname: c(f, 0).to_string(),
-            feldwert: c(f, 1).to_string(),
-        })
-        .collect();
-
     // ── Transaction History ───────────────────────────────────────────────────
     // Columns (0-indexed after table name and row kind are stripped):
     //  0  Date            – YYYY-MM-DD
@@ -195,11 +177,7 @@ pub fn parse_transaction_history(path: &Path) -> Result<TransactionHistoryData> 
         })
         .collect();
 
-    Ok(TransactionHistoryData {
-        statement,
-        summary,
-        transactions,
-    })
+    Ok(TransactionHistoryData { transactions })
 }
 
 #[derive(Debug, PartialEq, Eq)]

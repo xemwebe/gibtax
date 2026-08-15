@@ -1,17 +1,19 @@
 use crate::{
+    asset_events::{AssetEvent, AssetEventList},
     error::{Error, Result},
     read::KontoauszugData,
 };
 
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, fmt};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum FondsTyp {
     Aktien,
     Mixed,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct EtfPosition {
     menge: f64,
     eur_betrag: f64,
@@ -56,12 +58,82 @@ impl EtfPositionen {
         &self.positionen
     }
 
-    pub fn update_unterjährig(&mut self, kontoauszug: &KontoauszugData) -> Result<()> {
+    pub fn update_unterjährig(
+        &mut self,
+        kontoauszug: &KontoauszugData,
+        fx_rates: &crate::fx::FxRates,
+    ) -> Result<()> {
+        let event_list = AssetEventList::von_kontoauszug(kontoauszug)?;
+        for (date, events) in event_list.events {
+            for event in &events {
+                match event {
+                    AssetEvent::Kauf(t) => {
+                        if kontoauszug.finanzinstrumente.is_etf(&t.symbol, None)? {
+                            // Käufe in ETF Positionen aufnehmen
+                            let effektiver_kurs =
+                                (t.menge * t.transaktions_kurs + t.prov_gebuehr) / t.menge;
+                            let fx = fx_rates.get_fx_rate(date, &t.waehrung)?;
+                            let eur_betrag = fx * t.menge * effektiver_kurs;
+                            let fonds_typ = FondsTyp::Aktien;
+                            let monate = crate::date::get_remaining_months(date)?;
+                            let position = EtfPosition::new(t.menge, eur_betrag, fonds_typ, monate);
+                            self.add_position(&t.symbol, position);
+                        }
+                    }
+                    AssetEvent::Verkauf(t) => {
+                        if kontoauszug.finanzinstrumente.is_etf(&t.symbol, None)? {
+                            if let Some(käufe) = self.positionen.get_mut(&t.symbol) {
+                                let mut verbleibende_verkäufe = -t.menge;
+                                for p in käufe.iter_mut() {
+                                    if p.menge < verbleibende_verkäufe {
+                                        verbleibende_verkäufe -= p.menge;
+                                        p.menge = 0.0;
+                                    } else {
+                                        p.menge -= verbleibende_verkäufe;
+                                        break;
+                                    }
+                                }
+                            } else {
+                                log::warn!(
+                                    "Verkäufe von ETFs werden irgnoriert, da Position nicht gefunden wurde: {t:#?}"
+                                );
+                            }
+                        }
+                    }
+                    AssetEvent::Transfer(t) => {
+                        if kontoauszug.finanzinstrumente.is_etf(&t.symbol, None)? {
+                            log::warn!("Transfers von ETFs werden ignoriert: {t:#?}");
+                        }
+                    }
+                    AssetEvent::Kapitalmaßnahme(k) => {
+                        if kontoauszug
+                            .finanzinstrumente
+                            .is_etf(&k.altes_symbol, None)?
+                        {
+                            if let Some(käufe) = self.positionen.get(&k.altes_symbol) {
+                                let factor = k.neue_menge / k.alte_menge;
+                                let mut neue_käufe = (*käufe).clone();
+                                neue_käufe.iter_mut().for_each(|p| {
+                                    p.menge *= factor;
+                                });
+                                self.positionen.insert(k.neues_symbol.clone(), neue_käufe);
+                                self.positionen.remove(&k.altes_symbol);
+                            } else {
+                                log::warn!(
+                                    "Kapitalmaßnahmen für ETFs werden ignoriert, da Position nicht gefunden wurde: {k:#?}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct VorabpauschaleInfo {
     /// Symbol
     symbol: String,
@@ -80,14 +152,38 @@ pub struct VorabpauschaleInfo {
 }
 
 impl VorabpauschaleInfo {
+    pub fn calc(&self) -> f64 {
+        let basisertrag =
+            (self.start_wert * self.base_rate / 100.0 * 0.7) * (self.monate as f64) / 12.0;
+        let unrealisierter_gewinn = self.end_wert - self.start_wert;
+        let basisertrag = basisertrag.min(unrealisierter_gewinn);
+        let effektiver_basisertrag = (basisertrag - self.dividenden).max(0.0);
+        let teilfreistellung = match self.fonds_typ {
+            FondsTyp::Aktien => 0.3,
+            FondsTyp::Mixed => 0.15,
+        };
+        let tax = effektiver_basisertrag * (1.0 - teilfreistellung) * 0.25 * 1.055;
+        tax
+    }
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct Vorabpauschalen {
+    pauschalen_infos: Vec<VorabpauschaleInfo>,
+}
+
+impl Vorabpauschalen {
     pub fn sammle_vorabpauschalen_infos(
         last_kontoauszug: &KontoauszugData,
         kontoauszug: &KontoauszugData,
         base_rate: f64,
-    ) -> Result<Vec<VorabpauschaleInfo>> {
+        fx_rates: &crate::fx::FxRates,
+    ) -> Result<Self> {
+        log::debug!("sammle_vorabpauschalen_infos gestartet");
         let mut pauschalen_infos = Vec::new();
         let mut offene_positionen_start = last_kontoauszug.get_open_etf_positions()?;
-        offene_positionen_start.update_unterjährig(kontoauszug)?;
+        log::trace!("offene ETF Positionen zu Beginn: {offene_positionen_start:?}");
+        offene_positionen_start.update_unterjährig(kontoauszug, fx_rates)?;
         let offene_positionen_ende = kontoauszug.get_open_etf_positions()?;
         for (etf, position) in offene_positionen_ende.get_alle_positionen() {
             if position.is_empty() {
@@ -113,20 +209,20 @@ impl VorabpauschaleInfo {
                 return Err(Error::PassendeEtfStartPositionFehlt(etf.to_string()));
             }
         }
-        Ok(pauschalen_infos)
+        Ok(Vorabpauschalen { pauschalen_infos })
     }
+}
 
-    pub fn calc(&self) -> Result<f64> {
-        let basisertrag =
-            (self.start_wert * self.base_rate / 100.0 * 0.7) * (self.monate as f64) / 12.0;
-        let performance = self.end_wert / self.start_wert - 1.0;
-        let basisertrag = basisertrag.min(performance);
-        let effektiver_basisertrag = (basisertrag - self.dividenden).max(0.0);
-        let teilfreistellung = match self.fonds_typ {
-            FondsTyp::Aktien => 0.3,
-            FondsTyp::Mixed => 0.15,
-        };
-        let tax = effektiver_basisertrag * (1.0 - teilfreistellung) * 0.25 * 1.055;
-        Ok(tax)
+impl fmt::Display for Vorabpauschalen {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for info in &self.pauschalen_infos {
+            writeln!(
+                f,
+                "Vorabpauschale für {} beträgt {}",
+                info.symbol,
+                info.calc()
+            )?;
+        }
+        Ok(())
     }
 }

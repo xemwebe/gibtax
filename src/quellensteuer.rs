@@ -77,10 +77,7 @@ impl Display for QuellensteuerPerJurisdiktion {
                 for tax in &self.qsteuer_per_juris[jurisdiction] {
                     if let Some(waehrung) = waehrung {
                         if waehrung != tax.währung {
-                            writeln!(
-                                f,
-                                "Warnung: Inkonsistente Währung in derseblen Jurisdiction!"
-                            )?;
+                            log::warn!("Inkonsistente Währung in derseblen Jurisdiction!");
                         }
                     } else {
                         waehrung = Some(tax.währung.as_str());

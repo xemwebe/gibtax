@@ -124,7 +124,7 @@ pub fn berechne_veräußerungsgewinne(
                         fx,
                         purchase_cost,
                     );
-                    if kontoauszug.is_etf(&t.symbol, None)? {
+                    if kontoauszug.finanzinstrumente.is_etf(&t.symbol, None)? {
                         etf_veräußerungen.add(veräußerung);
                     } else {
                         aktien_veräußerungen.add(veräußerung);
@@ -132,14 +132,16 @@ pub fn berechne_veräußerungsgewinne(
                 }
                 AssetEvent::Transfer(t) => {
                     if t.richtung != "In" {
-                        eprintln!(
-                            "Warnung: Transferrichtung '{}' wird aktuell nicht unterstützt, ignoriere Transfer {:?}",
-                            t.richtung, t
+                        log::warn!(
+                            "Transferrichtung '{}' wird aktuell nicht unterstützt, ignoriere Transfer {:?}",
+                            t.richtung,
+                            t
                         );
                     } else if fifo.contains(&t.symbol) {
-                        eprintln!(
-                            "Warnung: Transfer von {} in existierende Position wird nicht unterstützt, ignoriere Transfer {:?}",
-                            t.symbol, t
+                        log::warn!(
+                            "Transfer von {} in existierende Position wird nicht unterstützt, ignoriere Transfer {:?}",
+                            t.symbol,
+                            t
                         );
                     } else {
                         if let Some(einstandskosten) = settings.einstandskosten.get(&t.symbol) {
@@ -149,9 +151,10 @@ pub fn berechne_veräußerungsgewinne(
                                 PurchaseInfo::new(t.menge, einstandskosten / t.menge),
                             )?;
                         } else {
-                            eprintln!(
-                                "Warnung: Für Transfer von {} fehlen die Einstandskosten, ignoriere Transfer {:?}",
-                                t.symbol, t
+                            log::warn!(
+                                "Für Transfer von {} fehlen die Einstandskosten, ignoriere Transfer {:?}",
+                                t.symbol,
+                                t
                             );
                         }
                     }

@@ -7,6 +7,7 @@ use crate::quellensteuer::QuellensteuerPerJurisdiktion;
 use crate::read::{self, parse_kontoauszug};
 use crate::settings::Settings;
 use crate::veraeusserung::{Veräußerungen, berechne_veräußerungsgewinne};
+use crate::vorabpauschale::Vorabpauschalen;
 use crate::wechselkurs::WährungsVerkäufe;
 use serde::{Deserialize, Serialize};
 use std::{fmt, fs::File};
@@ -24,6 +25,7 @@ pub struct Report {
     wechselkurs_gewinne: WährungsVerkäufe,
     fifo: FifoStore,
     curr_fifo: FifoStore,
+    vorabpauschalen: Vorabpauschalen,
 }
 
 impl Report {
@@ -58,9 +60,7 @@ impl Report {
                 curr_fifo_initialized = true;
             }
             Err(error) => {
-                eprintln!(
-                    "Warnung: Report vom letzten Jahr nicht gefunden oder nicht lesbar: {error}"
-                );
+                log::warn!("Report vom letzten Jahr nicht gefunden oder nicht lesbar: {error}");
             }
         };
         // Try initialize FIFO with last years FIFO-file
@@ -145,6 +145,30 @@ impl Report {
         self.wechselkurs_gewinne =
             WährungsVerkäufe::parse(&cash_flows, &fx_rates, &mut self.curr_fifo)?;
 
+        let kontoauszug_anfang_pfad = &settings
+            .jährliche_daten
+            .get(&(self.jahr - 2))
+            .ok_or(Error::KontoauszugFehlt(self.jahr - 22))?
+            .kontoauszug;
+        let kontoauszug_start = read::parse_kontoauszug(&kontoauszug_anfang_pfad)?;
+        let kontoauszug_ende_pfad = &settings
+            .jährliche_daten
+            .get(&(self.jahr - 1))
+            .ok_or(Error::KontoauszugFehlt(self.jahr - 1))?
+            .kontoauszug;
+        let kontoauszug_ende = read::parse_kontoauszug(&kontoauszug_ende_pfad)?;
+        let basis_rate = settings
+            .jährliche_daten
+            .get(&(self.jahr + 1))
+            .ok_or(Error::BasisRateFehlt(self.jahr))?
+            .basiszins;
+        self.vorabpauschalen = Vorabpauschalen::sammle_vorabpauschalen_infos(
+            &kontoauszug_start,
+            &kontoauszug_ende,
+            basis_rate,
+            &fx_rates,
+        )?;
+
         Ok(())
     }
 
@@ -197,6 +221,11 @@ impl fmt::Display for Report {
             f,
             "\n== Gewinne aus Veräußerung von Fremdwährungen\n{}",
             self.wechselkurs_gewinne
+        )?;
+        writeln!(
+            f,
+            "\n== Vorabpauschalen auf ETFs und Fonds\n{}",
+            self.vorabpauschalen
         )?;
         Ok(())
     }
