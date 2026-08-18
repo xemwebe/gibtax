@@ -1,5 +1,6 @@
 use crate::date::convert_date;
 use crate::error::Error;
+use crate::formatting::round2;
 use crate::fx::FxRates;
 use crate::parser::parse_asset_ids;
 use crate::read::KontoauszugData;
@@ -32,9 +33,9 @@ pub fn berechne_dividenden(
         let dividende = Dividende {
             beschreibung: div.beschreibung.clone(),
             date: div.datum.clone(),
-            betrag: (100.0 * div.betrag).round() / 100.0,
+            betrag: round2(div.betrag),
             währung: div.waehrung.clone(),
-            eur_betrag: (100.0 * eur_betrag).round() / 100.0,
+            eur_betrag: round2(eur_betrag),
             is_etf: kontoauszug.finanzinstrumente.is_etf(&symbol, Some(&isin))?,
         };
         if kontoauszug.finanzinstrumente.is_etf(&symbol, Some(&isin))? {
@@ -62,16 +63,26 @@ impl fmt::Display for Dividenden {
         let mut curr_sum = 0.0;
         let mut eur_curr_sum = 0.0;
         let mut eur_sum = 0.0;
+
         for div in &self.dividenden {
             if last_curr != div.währung {
                 if !last_curr.is_empty() {
                     writeln!(
                         f,
-                        "Summe Dividenden in {last_curr}: {} {last_curr} oder {} EUR\n",
-                        (100.0f64 * curr_sum).round() / 100.0,
-                        (100.0f64 * eur_curr_sum).round() / 100.0,
+                        ")\nSumme Dividenden in {last_curr}: {} {last_curr} oder {} EUR\n",
+                        round2(curr_sum),
+                        round2(eur_curr_sum),
                     )?;
                 }
+                writeln!(
+                    f,
+                    r#"#table(
+        columns: (auto, auto, auto, auto),
+        align: (left, right, right, right),
+        stroke: 0.5pt,
+        inset: 8pt,
+        table.header([*Beschreibung*],[*Datum*],[*Betrag in FW*],[*Betrag in EUR*]),"#
+                )?;
                 last_curr = &div.währung;
                 curr_sum = 0.0;
                 eur_curr_sum = 0.0;
@@ -81,23 +92,19 @@ impl fmt::Display for Dividenden {
             eur_curr_sum += div.eur_betrag;
             writeln!(
                 f,
-                "{:110} {:10} {:9.2} {:3} {:9.2} EUR",
+                "[{}],[{}],[{:.2} {:3}],[{:.2} EUR],",
                 div.beschreibung, div.date, div.betrag, div.währung, div.eur_betrag,
             )?;
         }
         if !last_curr.is_empty() {
             writeln!(
                 f,
-                "Summe Dividenden in {last_curr}: {} {last_curr} oder {} EUR\n",
-                (100.0f64 * curr_sum).round() / 100.0,
-                (100.0f64 * eur_curr_sum).round() / 100.0,
+                ")\nSumme Dividenden in {last_curr}: {} {last_curr} oder {} EUR\n",
+                round2(curr_sum),
+                round2(eur_curr_sum),
             )?;
         }
-        writeln!(
-            f,
-            "Summe aller Dividenden in EUR: {}",
-            (100.0 * eur_sum).round() / 100.0
-        )?;
+        writeln!(f, "Summe aller Dividenden in EUR: {}", round2(eur_sum))?;
         Ok(())
     }
 }

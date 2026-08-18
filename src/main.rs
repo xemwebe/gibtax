@@ -4,6 +4,7 @@ mod date;
 mod dividends;
 mod error;
 mod fifo;
+mod formatting;
 mod fx;
 mod parser;
 mod quellensteuer;

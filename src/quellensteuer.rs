@@ -1,3 +1,4 @@
+use crate::formatting::round2;
 use serde::{Deserialize, Serialize};
 
 use std::{
@@ -42,29 +43,34 @@ impl Display for QuellensteuerPerJurisdiktion {
                 f,
                 "Abgeführte deutsche Quellensteuer auf Dividenden (inkl. Solidaritätszuschlag"
             )?;
+            writeln!(
+                f,
+                r#"#table(
+    columns: (auto, auto, auto),
+    align: (left, right, right),
+    stroke: 0.5pt,
+    inset: 8pt,
+    table.header([*Beschreibung*],[*Datum*],[*Abgeführte Quellensteuer*]),"#
+            )?;
             for tax in german_qtax {
                 writeln!(
                     f,
-                    "{:110} {:10} {:3} {:9.2}",
+                    "[{}],[{}],[{:.2} {}],",
                     tax.beschreibung,
                     tax.datum,
+                    round2(tax.betrag),
                     tax.währung,
-                    (100.0f64 * tax.betrag).round() / 100.0
                 )?;
                 sum += tax.betrag;
             }
-            writeln!(
-                f,
-                "Gesamtbetrag in EUR: {:9.2}",
-                (100.0f64 * sum).round() / 100.
-            )?;
+            writeln!(f, ")\nGesamtbetrag in EUR: {:9.2}", round2(sum))?;
         } else {
-            writeln!(f, "Es wurden keine deutschen Quellensteuern abgeführt.")?;
+            writeln!(f, "Es wurden keine deutschen Quellensteuern abgeführt.\n")?;
         }
         if self.qsteuer_per_juris.len() > key_count {
             writeln!(
                 f,
-                "\nAbgeführte ausländische Quellensteuer nach Jurisdiction"
+                "\nAbgeführte ausländische Quellensteuer nach Jurisdiktion"
             )?;
             for jurisdiction in self.qsteuer_per_juris.keys() {
                 if jurisdiction == "DE" {
@@ -74,22 +80,31 @@ impl Display for QuellensteuerPerJurisdiktion {
                 let mut waehrung = None;
                 let mut eur_sum = 0.0;
                 let mut curr_sum = 0.0;
+                writeln!(
+                    f,
+                    r#"#table(
+        columns: (auto, auto, auto, auto),
+        align: (left, right, right, right),
+        stroke: 0.5pt,
+        inset: 8pt,
+        table.header([*Beschreibung*],[*Datum*],[*Abgeführte Quellensteuer in FW*],[*in EUR*]),"#
+                )?;
                 for tax in &self.qsteuer_per_juris[jurisdiction] {
                     if let Some(waehrung) = waehrung {
                         if waehrung != tax.währung {
-                            log::warn!("Inkonsistente Währung in derseblen Jurisdiction!");
+                            log::warn!("Inkonsistente Währung in derselben Jurisdiktion!");
                         }
                     } else {
                         waehrung = Some(tax.währung.as_str());
                     }
                     writeln!(
                         f,
-                        "{:110} {:10} {:9.2} {:3} {:9.2} EUR",
+                        "[{}],[{}],[{:.2} {:3}],[{:.2} EUR],",
                         tax.beschreibung,
                         tax.datum,
-                        (100.0f64 * tax.betrag).round() / 100.0,
+                        round2(tax.betrag),
                         tax.währung,
-                        (100.0f64 * tax.eur_betrag).round() / 100.0,
+                        round2(tax.eur_betrag),
                     )?;
                     curr_sum += tax.betrag;
                     eur_sum += tax.eur_betrag;
@@ -97,16 +112,16 @@ impl Display for QuellensteuerPerJurisdiktion {
                 }
                 writeln!(
                     f,
-                    "Gesamtbetrag in {}: {:.2} oder {:.2} EUR",
+                    ")\nGesamtbetrag in {}: {:.2} oder {:.2} EUR",
                     waehrung.unwrap_or("unknown"),
-                    (100.0f64 * curr_sum).round() / 100.,
-                    (100.0f64 * eur_sum).round() / 100.
+                    round2(curr_sum),
+                    round2(eur_sum)
                 )?;
             }
         } else {
             writeln!(
                 f,
-                "Es wurden keine Quellensteuer für ausländische Jurisdiktionen abgeführt."
+                "Es wurden keine Quellensteuer für ausländische Jurisdiktionen abgeführt.\n"
             )?;
         }
         if sum != 0.0 {

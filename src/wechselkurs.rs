@@ -3,7 +3,9 @@ use crate::date::convert_timestamp_to_date_string;
 use crate::error::Result;
 use crate::fifo::FifoStore;
 use crate::fifo::PurchaseInfo;
+use crate::formatting::round2;
 use crate::fx::FxRates;
+
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -70,24 +72,42 @@ impl WährungsVerkäufe {
 
 impl fmt::Display for WährungsVerkäufe {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "\n== Gewinne und Verluste aus Währungsverkäufen")?;
+        if self.verkäufe.is_empty() {
+            return writeln!(
+                f,
+                "Es wurden keine Veräußerungsgeschäfte in diesem Zeitraum getätigt.\n"
+            );
+        }
         let mut sum = 0.0;
+        writeln!(
+            f,
+            r#"#table(
+columns: (auto, auto, auto, auto, auto),
+align: (left, right, right, right, right),
+stroke: 0.5pt,
+inset: 8pt,
+table.header([*Datum*],[*Währungsbetrag*],[*Erlöso*],[*Einstandskosten*],[*Gewinn*]),"#
+        )?;
         for c in &self.verkäufe {
             let eur_gewinn = c.eur_gewinn();
             sum += eur_gewinn;
             writeln!(
                 f,
-                "Verkauf am {} von {:8.2} {} ({:8.2} EUR) mit Einstand {:8.2} EUR und real. GuV {:8.2} EUR",
+                "[{}],[{:.2} {:3}],[{:.2} EUR],[{:.2} EUR],[{:.2} EUR],",
                 c.datum,
-                c.erlös,
+                round2(c.erlös),
                 c.währung,
-                c.eur_erlös(),
-                c.einstandskosten,
-                eur_gewinn,
+                round2(c.eur_erlös()),
+                round2(c.einstandskosten),
+                round2(eur_gewinn),
             )?;
         }
 
-        writeln!(f, "Gesamtsumme Kapitalerträge in EUR: {}", sum)?;
+        writeln!(
+            f,
+            ")\nGesamtsumme Kapitalerträge in EUR: {:.2}",
+            round2(sum)
+        )?;
         Ok(())
     }
 }

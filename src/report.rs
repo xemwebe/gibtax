@@ -2,6 +2,7 @@ use crate::cash;
 use crate::dividends::{Dividenden, berechne_dividenden};
 use crate::error::{Error, Result};
 use crate::fifo::FifoStore;
+use crate::formatting::round2;
 use crate::fx;
 use crate::quellensteuer::QuellensteuerPerJurisdiktion;
 use crate::read::{self, parse_kontoauszug};
@@ -170,7 +171,7 @@ impl Report {
         let kontoauszug_ende = read::parse_kontoauszug(&kontoauszug_ende_pfad)?;
         let basis_rate = settings
             .jährliche_daten
-            .get(&(self.jahr + 1))
+            .get(&(self.jahr - 1))
             .ok_or(Error::BasisRateFehlt(self.jahr))?
             .basiszins;
         self.vorabpauschalen = Vorabpauschalen::sammle_vorabpauschalen_infos(
@@ -195,10 +196,11 @@ impl Report {
 
 impl fmt::Display for Report {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "#set page(flipped: true)")?;
         writeln!(f, "= Steuerbericht für das Jahr {}", self.jahr)?;
 
         writeln!(f, "\n== Zinsen")?;
-        writeln!(f, "Realisierte Zinsen: {}", self.eur_zinsen)?;
+        writeln!(f, "Realisierte Zinsen: {} EUR", round2(self.eur_zinsen))?;
 
         writeln!(f, "\n== Erhaltene Dividenden auf Aktien")?;
         writeln!(f, "{}", &self.aktien_dividenden)?;
@@ -233,6 +235,7 @@ impl fmt::Display for Report {
             "\n== Gewinne aus Veräußerung von Fremdwährungen\n{}",
             self.wechselkurs_gewinne
         )?;
+
         writeln!(
             f,
             "\n== Vorabpauschalen auf ETFs und Fonds\n{}",

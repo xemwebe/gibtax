@@ -1,6 +1,7 @@
 use crate::{
     asset_events::{AssetEvent, AssetEventList},
     error::{Error, Result},
+    formatting::round2,
     read::KontoauszugData,
 };
 
@@ -141,20 +142,22 @@ pub struct VorabpauschaleInfo {
     start_wert: f64,
     /// Fondswert zum Edne der Periode
     end_wert: f64,
-    /// Basiszinssatz in %
-    base_rate: f64,
     /// Typ des Fonds
     fonds_typ: FondsTyp,
     /// ausgesschüttete Dividenden zwischen Start und Ende der Periode
     dividenden: f64,
     /// Angrebochene Anzahl der Monate, die der Fonds gehalten wurden (12 für ein ganzes Jahr)
     monate: u8,
+    /// ISIN des ETFs
+    isin: String,
+    /// Bechreibung des ETFs
+    name: String,
 }
 
 impl VorabpauschaleInfo {
-    pub fn calc(&self) -> f64 {
+    pub fn calc(&self, basis_rate: f64) -> f64 {
         let basisertrag =
-            (self.start_wert * self.base_rate / 100.0 * 0.7) * (self.monate as f64) / 12.0;
+            (self.start_wert * basis_rate / 100.0 * 0.7) * (self.monate as f64) / 12.0;
         let unrealisierter_gewinn = self.end_wert - self.start_wert;
         let basisertrag = basisertrag.min(unrealisierter_gewinn);
         let effektiver_basisertrag = (basisertrag - self.dividenden).max(0.0);
@@ -170,13 +173,15 @@ impl VorabpauschaleInfo {
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Vorabpauschalen {
     pauschalen_infos: Vec<VorabpauschaleInfo>,
+    /// Basiszinssatz in %
+    basis_rate: f64,
 }
 
 impl Vorabpauschalen {
     pub fn sammle_vorabpauschalen_infos(
         last_kontoauszug: &KontoauszugData,
         kontoauszug: &KontoauszugData,
-        base_rate: f64,
+        basis_rate: f64,
         fx_rates: &crate::fx::FxRates,
     ) -> Result<Self> {
         log::debug!("sammle_vorabpauschalen_infos gestartet");
@@ -195,11 +200,15 @@ impl Vorabpauschalen {
             let position = &position[0];
             if let Some(start_positionen) = offene_positionen_start.get_positionen(&etf) {
                 for start_position in start_positionen {
+                    let (isin, name) = kontoauszug
+                        .finanzinstrumente
+                        .get_isin_and_name_by_symbol(etf)?;
                     pauschalen_infos.push(VorabpauschaleInfo {
                         symbol: etf.to_string(),
+                        isin,
+                        name,
                         start_wert: start_position.eur_betrag,
                         end_wert: position.eur_betrag,
-                        base_rate,
                         fonds_typ: position.fonds_typ,
                         dividenden: start_position.dividenden,
                         monate: start_position.monate,
@@ -209,20 +218,40 @@ impl Vorabpauschalen {
                 return Err(Error::PassendeEtfStartPositionFehlt(etf.to_string()));
             }
         }
-        Ok(Vorabpauschalen { pauschalen_infos })
+        Ok(Vorabpauschalen {
+            pauschalen_infos,
+            basis_rate,
+        })
     }
 }
 
 impl fmt::Display for Vorabpauschalen {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Vorjahresbasiszins: {}\n", self.basis_rate)?;
+        writeln!(
+            f,
+            r#"#table(
+columns: (auto, auto, auto, auto, auto),
+align: (left, right, right, right, right),
+stroke: 0.5pt,
+inset: 8pt,
+table.header([*Wertpapier*],[*Monate*],[*Wert am Anfang der Haltedauer*],[*Wert Jahresende*],[*Vorabpauschale*]),"#
+        )?;
+
         for info in &self.pauschalen_infos {
             writeln!(
                 f,
-                "Vorabpauschale für {} beträgt {}",
+                "[*{}* ({}) \\ {}],[{}],[{:.2} EUR],[{:.2} EUR],[{:.2} EUR],",
+                info.isin,
                 info.symbol,
-                info.calc()
+                info.name,
+                info.monate,
+                round2(info.start_wert),
+                round2(info.end_wert),
+                round2(info.calc(self.basis_rate)),
             )?;
         }
+        writeln!(f, ")\n")?;
         Ok(())
     }
 }

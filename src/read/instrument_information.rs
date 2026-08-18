@@ -128,4 +128,13 @@ impl FinanzInstrumentInfos {
         }
         Err(Error::SymbolNotFound(symbol.to_string()))
     }
+
+    pub fn get_isin_and_name_by_symbol(&self, symbol: &str) -> Result<(String, String)> {
+        for info in &self.infos {
+            if Self::check_symbol(&info.symbol, symbol) {
+                return Ok((info.wertpapier_id.clone(), info.beschreibung.clone()));
+            }
+        }
+        Err(Error::SymbolNotFound(symbol.to_string()))
+    }
 }

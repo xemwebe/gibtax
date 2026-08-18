@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::asset_events::{AssetEvent, AssetEventList};
 use crate::error::Error;
 use crate::fifo::{FifoStore, PurchaseInfo};
+use crate::formatting::round2;
 use crate::fx::FxRates;
 use crate::read::KontoauszugData;
 use crate::settings::Settings;
@@ -62,26 +63,45 @@ pub struct Veräußerungen {
 
 impl fmt::Display for Veräußerungen {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.veräußerungen.is_empty() {
+            return writeln!(
+                f,
+                "Es wurden keine Veräußerungsgeschäfte in diesem Zeitraum getätigt.\n"
+            );
+        }
         let mut sum = 0.0;
+        writeln!(
+            f,
+            r#"#table(
+columns: (auto, auto, auto, auto, auto, auto, auto),
+align: (left, right, right, right, right, right, right),
+stroke: 0.5pt,
+inset: 8pt,
+table.header([*Wertpapier*],[*Datum*],[*Stückzahl*],[*Nettoerlös in FW*],[*Nettoerlös in EUR*],[*Einstandskosten*],[*Gewinn*]),"#
+        )?;
         for v in &self.veräußerungen {
             let netto_erlös = v.netto_erlös();
             let eur_gewinn = v.eur_gewinn();
             sum += eur_gewinn;
             writeln!(
                 f,
-                "Verkauf am {:8} von {:8.2} {:6} zu {:8.2} {} oder {:8.2} EUR mit Einstand {:8.2} EUR und real. GuV {:8.2} EUR",
+                "[{}],[{}],[{}],[{:.2} {}],[{:.2} EUR],[{:.2} EUR],[{:.2} EUR],",
+                v.symbol,
                 v.datum_zeit,
                 v.menge,
-                v.symbol,
-                netto_erlös,
+                round2(netto_erlös),
                 v.währung,
-                v.fx * netto_erlös,
-                v.einstandskosten,
-                eur_gewinn,
+                round2(v.fx * netto_erlös),
+                round2(v.einstandskosten),
+                round2(eur_gewinn),
             )?;
         }
 
-        writeln!(f, "Gesamtsumme Kapitalerträge in EUR: {}", sum)?;
+        writeln!(
+            f,
+            ")\nGesamtsumme Kapitalerträge in EUR: {:-2}",
+            round2(sum)
+        )?;
         Ok(())
     }
 }
@@ -121,8 +141,8 @@ pub fn berechne_veräußerungsgewinne(
                         &t.waehrung,
                         t.erloese,
                         t.prov_gebuehr,
-                        fx,
                         purchase_cost,
+                        fx,
                     );
                     if kontoauszug.finanzinstrumente.is_etf(&t.symbol, None)? {
                         etf_veräußerungen.add(veräußerung);
